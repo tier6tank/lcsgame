@@ -96,6 +96,14 @@ SOURCE=.\curses.h
 # End Source File
 # Begin Source File
 
+SOURCE=.\cursesgraphics.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\cursesgraphics.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\cursesmovie.cpp
 # End Source File
 # Begin Source File

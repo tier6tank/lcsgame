@@ -139,7 +139,7 @@ if (! lcs_art_init)
        	if (stat(art, &buf) != 0)
        	{
        		//TODO Invalid LCS_ART_DIR warning
-    	  	fprintf(stderr,"Warning: LCS art directory: %s\n",lcs_art);
+    	  	fprintf(stderr,"Warning: LCS art directory: %s\n",art);
     	  	fprintf(stderr,"         as defined by environment variable LCS_ART_DIR\n");
     	  	fprintf(stderr,"         could not be found. Checking for other possibilities...\n");
        		art = NULL;
@@ -187,7 +187,7 @@ p1 = strchr(filename,'\\');
   if (p1 != NULL)
   {
    p1++;
-   tofree = strlen(p1);
+   tofree = strlen(p1)+1+strlen(lcs_art);
    f = (char *)malloc((tofree+1)*sizeof(char));   
    sprintf(f, "%s/%s", lcs_art, p1);	
  

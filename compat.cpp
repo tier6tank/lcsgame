@@ -19,13 +19,78 @@
 //    along with Liberal Crime Squad; if not, write to the Free Software				//
 //    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA			//
 //////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+* \file		compat.cpp
+*
+* \brief	Compatibility Functions to support ports to non-Windows Platforms
+*
+* $Author: sadler $
+* $Date: 2004/07/01 20:09:11 $
+* \version	$Name: HEAD $ $Revision: 1.4 $
+*
+* $Id: compat.cpp,v 1.4 2004/07/01 20:09:11 sadler Exp $
+*
+* <HR>
+* \b Liberal Crime Squad
+*
+* 
+* <HR>
+*
+* \par Abstract
+* 
+* \par Portability Functions
+*
+* These functions are intended to replace explicit calls to Windows API.
+*
+* We can do the following:
+*
+* (a) Write alternative calls for the ports, keep Windows calls.
+* (b) Write portable alternatives for use by Windows and ports.
+* (c) Do (a) and (b) and decide what Windows does (API or portable)
+*     based on the value of a MACRO GO_PORTABLE.
+* 
+* compat.cpp is the place for non-trivial or more global functions,
+*
+* <HR>
+*
+* \par History
+*
+* \par
+* $Log: compat.cpp,v $
+* Revision 1.4  2004/07/01 20:09:11  sadler
+* Changes for portability...
+* 1) For Visual C++ 6.0 don't use namespace std.
+* 2) MINGW32 had a name clash between the UNIX-like time() function and
+* the time variable used for WIN32. Changed time to ptime.
+*
+* Revision 1.3  2004/06/30 22:46:33  sadler
+* Moved itoa() from game into compat.cpp
+*
+*
+*/
+
 /* Headers for Portability */
   #include <string.h>
   #include <stdlib.h>
+
 #ifdef WIN32
   #include <windows.h>
   #define HAS_STRICMP
+  #define HAS_ITOA
+ #ifdef __MINGW32__
+    #include <iostream>
+ #else
+    #if _MSC_VER > 1200
+      #define WIN32_DOTNET
+      #include <iostream>
+    #else
+      #define WIN32_PRE_DOTNET
+      #include <iostream.h>
+    #endif
+ #endif
 #else
+ #include <iostream>
  #ifdef Linux // And BSD and SVr4
     #include <unistd.h>
     #include <sys/time.h>  
@@ -34,6 +99,9 @@
   #endif 
 #endif
 
+#ifndef WIN32_PRE_DOTNET
+using namespace std;
+#endif
 
  #ifndef HAS_STRICMP
  // Portable equivalent of Windows stricmp() function.
@@ -127,13 +195,13 @@ void initalarm()
 #endif 
 
 #ifdef WIN32
-  unsigned long time=GetTickCount();
+  unsigned long ptime=GetTickCount();
 #endif
 
 void alarmset(int t)
 {
 #ifdef WIN32
-  time=GetTickCount() + t;
+  ptime=GetTickCount() + t;
 #else
   /* If the signal handler is not set up set it up now */
   if (init_alarm==0)
@@ -151,7 +219,7 @@ void alarmset(int t)
 void alarmwait()
 {
 #ifdef WIN32
- while(time > GetTickCount());
+ while(ptime > GetTickCount());
 #else
   struct itimerval timer_now;
   getitimer(ITIMER_REAL, &timer_now);
@@ -177,15 +245,37 @@ void pause_ms(int t)
   
  #else
    #ifdef WIN32
-  time=GetTickCount() + t;
+  ptime=GetTickCount() + t;
  
  // Sadler - In 3.05 this while() was also checking that time <= GetTickCount()
  //          but as that should always be true it is removed.
- while(time > GetTickCount());
+ while(ptime > GetTickCount());
    #endif
  
  #endif
   
 }
 
+#ifndef HAS_ITOA
+ // Portable equivalent of Windows itoa() function.
+ // Note the radix parameter is expected to be 10.
+ // The function is not fully ported and doesn't support
+ //other bases, it's just enough for this program to be
+ //ported.
+ // Ensure buffer is of sufficient size.
+ char *itoa(int value, char *buffer, int radix)
+ {
+ if (radix != 10)
+   {
+    // Error - base other than 10 not supported.
+    cerr << "Error: itoa() - Ported function does not support bases other than 10." << endl;
+    exit(1); 
+   }
+   else if (buffer != NULL)
+   {
+   sprintf(buffer, "%d", value);
+   }
+   return buffer;
+ }
+ #endif
  

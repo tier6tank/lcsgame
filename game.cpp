@@ -30,23 +30,30 @@
   #include <string.h>
   //Visual C++ .NET (7) includes the STL with vector, so we
   //will use that, otherwise the HP STL Vector.h will be used.
-  #if _MSC_VER > 1200
-    #define WIN32_DOTNET
+  #ifdef __MINGW32__
     #include <iostream>
     #include <fstream>
     #include <vector>
+    #include <io.h> //needed for unlink()
   #else
-    #define WIN32_PRE_DOTNET
-    #include <iostream.h>
-    #include <fstream.h>
-    #include "vector.h"
+    #if _MSC_VER > 1200
+      #define WIN32_DOTNET
+      #include <iostream>
+      #include <fstream>
+      #include <vector>
+    #else
+      #define WIN32_PRE_DOTNET
+      #include <iostream.h>
+      #include <fstream.h>
+      #include "vector.h"
+    #endif
   #endif
   #include "curses.h"
   //undo PDCurses macros that break vector class
   #undef erase
   #undef clear
-  
-  #define HAS_ITOA
+    
+  #define CH_USE_CP437
 #else
   #include <vector>
   #include <string.h>
@@ -54,6 +61,8 @@
   #include <fstream>
   #include <ctype.h>
   #define GO_PORTABLE
+  
+  #define CH_USE_ASCII_HACK
 
   #ifdef XCURSES
     #define HAVE_PROTO 1
@@ -92,10 +101,38 @@ using namespace std;
 #include "lcsio.h"
 #include "compat.h"
 #include "cursesmovie.h"
+#include "cursesgraphics.h"
 CursesMoviest movie;
 unsigned char bigletters[27][5][7][4];
 unsigned char newstops[5][80][5][4];
 unsigned char newspic[20][78][18][4];
+
+//outstanding issues
+	//site trucker-type bug still happens (latte-stand)
+		//might have to do with missing location in the verifyworklocation() loop
+			//but cannot locate instance of this
+	//can have hostage in court?
+
+//changes 3.09
+	//udistrict -> outoftown for the outskirts location
+	//in advanceday(), made people going on vacation drop off squad loot
+		//if they are the last person in their squad (or else it would be deleted)
+	//added a function to every instance where a vehicle is deleted that
+		//makes sure that the liberal car preferences are nullified
+	//update version number on the title screen
+	//changed version variable to 30900
+	//changed activesquad to squad[sq] in one portion of the squad movement code
+	//added a tweak to verifyworklocation(), but problem probably still exists
+
+//changes 3.08
+	//siegetype occurred many times where it shouldn't have in a majornewspaper() if statement
+	//added loitering offense if no other offense exists
+	//fixed the wheelchair bug in assemblesquad()
+
+//OUTSTANDING ISSUES:
+//possible bug with hauling people
+//somebody claims saving works only 3/4 of the time (no confirmation)
+//somebody claims squads don't move (sounds like older version bug, they haven't told me version)
 
 //#define NOENEMYATTACK
 //#define SHITLAWS
@@ -103,15 +140,6 @@ unsigned char newspic[20][78][18][4];
 //#define HIGHFUNDS
 //#define AUTOENLIGHTEN
 //#define SHOWWAIT
-
-//changes
-	//siegetype occurred many times where it shouldn't have in a majornewspaper() if statement
-	//added loitering offense if no other offense exists
-	//fixed the wheelchair bug in assemblesquad()
-
-//&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-//bugs with car chases and the dead
-//bugs with hauling people
 
 #define BIT1 1
 #define BIT2 2
@@ -1159,7 +1187,7 @@ short exec[EXECNUM];
 short execterm=1;
 char execname[EXECNUM][80];
 
-unsigned long version=30810;
+unsigned long version=30900;
 unsigned long lowestloadversion=30500;
 unsigned long lowestloadscoreversion=30001;
 
@@ -1318,8 +1346,8 @@ highscorest score[SCORENUM];
 int yourscore=-1;
 
 void set_color(short f,short b,char bright);
-void translategetch(char &c);
-void translategetch_cap(char &c);
+void translategetch(int &c);
+void translategetch_cap(int &c);
 
 void mode_title(void);
 void mode_base(void);
@@ -1376,6 +1404,7 @@ void consolidateloot(vector<itemst *> &loot);
 char itemcompare(itemst *a,itemst *b);
 short ammotype(int type);
 void save(void);
+void autosave(void);
 char load(void);
 void choose_buyer(short &buyer);
 void conservatise(creaturest &cr);
@@ -1581,12 +1610,11 @@ void reloadparty(void);
 void imprison(creaturest &g);
 void addlocationname(locationst *loc);
 void loadinitfile(void);
+void removecarprefs_pool(long carid);
 
 /*--------------------------------------------------------------------------
  * Portability Functions
  *
- * Comment by Kevin Sadler 
- * 
  * These functions are intended to replace explicit calls to Windows API.
  *
  * We can do the following:
@@ -1596,7 +1624,7 @@ void loadinitfile(void);
  * (c) Do (a) and (b) and decide what Windows does (API or portable)
  *     based on the value of a MACRO GO_PORTABLE.
  * 
- *
+ * compat.cpp is the place for non-trivial or more global functions.
  *--------------------------------------------------------------------------*/
  
  unsigned long getSeed(void)
@@ -1617,37 +1645,13 @@ void loadinitfile(void);
  }
  
  
- #ifndef HAS_ITOA
- // Portable equivalent of Windows itoa() function.
- // Note the radix parameter is expected to be 10.
- // The function is not fully ported and doesn't support
- //other bases, it's just enough for this program to be
- //ported.
- // Ensure buffer is of sufficient size.
- char *itoa(int value, char *buffer, int radix)
- {
- if (radix != 10)
-   {
-    // Error - base other than 10 not supported.
-    cerr << "Error: itoa() - Ported function does not support bases other than 10." << endl;
-    exit(1); 
-   }
-   else if (buffer != NULL)
-   {
-   sprintf(buffer, "%d", value);
-   }
-   return buffer;
- }
- #endif
-
- 
- 
  /* raw_output() is provided in PDcurses/Xcurses but is not in ncurses.
   * This function is for compatibility and is currently a do nothing function.
   */
  #ifdef NCURSES
  inline int raw_output(bool bf)
  {
+ 	raw();
  return OK;
  }
  
@@ -1803,7 +1807,7 @@ long LCSrandom(unsigned long max)
 	long double rand_y;
 	long double rand_i;
 
-	rand_i = 2147483648L;
+	rand_i = 2147483648UL;
 
 	rand_y = max*((long double)seed/rand_i);
 
@@ -1813,12 +1817,12 @@ long LCSrandom(unsigned long max)
 //sets seed to a random number from 0 to 2 billion
 unsigned long r_num(void)
 {
-	seed=(seed*907725L+99979777L)%2147483648L;
+	seed=(seed*907725L+99979777UL)%2147483648UL;
 	return seed;
 }
 
 //IN CASE FUNKY ARROW KEYS ARE SENT IN, TRANSLATE THEM BACK
-void translategetch(char &c)
+void translategetch(int &c)
 {
 	//if(c==-63)c='7';
 	//if(c==-62)c='8';
@@ -1846,8 +1850,15 @@ void translategetch(char &c)
 	*/
 
 	if(c>='A'&&c<='Z'){c-='A';c+='a';}
+
+	/* Support Cursor Keys...*/
+	if(c==KEY_LEFT)c='a';
+	if(c==KEY_RIGHT)c='d';
+	if(c==KEY_UP)c='w';
+	if(c==KEY_DOWN)c='x';
+
 }
-void translategetch_cap(char &c)
+void translategetch_cap(int &c)
 {
 	//if(c==-63)c='7';
 	//if(c==-62)c='8';
@@ -1933,7 +1944,7 @@ void mode_title(void)
 		}
 
 	set_color(COLOR_WHITE,COLOR_BLACK,1);
-	strcpy(str,"v3.081 Copyright (C) 2002-4, Tarn Adams");
+	strcpy(str,"v3.09 Copyright (C) 2002-4, Tarn Adams");
 	move(13,39-((strlen(str)-1)>>1));
 	addstr(str);
 	strcpy(str,"A Bay 12 Games Production");
@@ -1949,7 +1960,7 @@ void mode_title(void)
 	move(22,39-((strlen(str)-1)>>1));
 	addstr(str);
 
-	char c=getch();
+	int c=getch();
 	translategetch(c);
 	if(c==27)
 		{
@@ -2233,7 +2244,7 @@ void mode_base(void)
 						addstr("::::::");
 						set_color(COLOR_WHITE,COLOR_RED,1);
 						move(p+17,38);
-						for(int i=0;i<10;i++)addch(220);
+						for(int i=0;i<10;i++)addch(CH_LOWER_HALF_BLOCK);
 						}
 					else
 						{
@@ -2241,8 +2252,8 @@ void mode_base(void)
 						else set_color(COLOR_RED,COLOR_BLACK,0);
 						for(int i=0;i<16;i++)
 							{
-							if(p==6)addch(223);
-							else addch(220);
+							if(p==6)addch(CH_UPPER_HALF_BLOCK);
+							else addch(CH_LOWER_HALF_BLOCK);
 							}
 						}
 					}
@@ -2361,7 +2372,7 @@ void mode_base(void)
 			refresh();
 			}
 
-		char c='w';
+		int c='w';
 		if(!forcewait)
 			{
 			c=getch();
@@ -2954,7 +2965,7 @@ void review(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==interface_pgup&&page>0)page--;
@@ -3146,7 +3157,7 @@ void assemblesquad(squadst *cursquad)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -3370,7 +3381,7 @@ void orderparty(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==10)return;
@@ -4185,7 +4196,7 @@ void mode_site(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(partyalive==0&&c=='c')
@@ -4201,6 +4212,7 @@ void mode_site(void)
 						long v=id_getcar(activesquad->squad[p]->carid);
 						if(v!=-1)
 							{
+							removecarprefs_pool(vehicle[v]->id);
 							delete vehicle[v];
 							vehicle.erase(vehicle.begin() + v);
 							}
@@ -4272,7 +4284,7 @@ void mode_site(void)
 
 				do
 					{
-					char c2=getch();
+					int c2=getch();
 					translategetch(c2);
 
 					if(c2=='w'||c2=='a'||c2=='d'||c2=='x')
@@ -4416,7 +4428,7 @@ void mode_site(void)
 						do
 							{
 							refresh();
-							char c=getch();
+							int c=getch();
 							translategetch(c);
 							if(c>='1'&&c<='6')
 								{
@@ -4465,7 +4477,7 @@ void mode_site(void)
 									}
 
 								refresh();
-								char c=getch();
+								int c=getch();
 								translategetch(c);
 								if(c>='a'&&c<='z')
 									{
@@ -4570,13 +4582,13 @@ void mode_site(void)
 							else
 								{
 								set_color(COLOR_WHITE,COLOR_BLACK,0);
-								if(map[x][y][locz].flag & SITEBLOCK_BLOCK)addch(219);
-								else if(map[x][y][locz].flag & SITEBLOCK_DOOR)addch(176);
+								if(map[x][y][locz].flag & SITEBLOCK_BLOCK)addch(CH_FULL_BLOCK);
+								else if(map[x][y][locz].flag & SITEBLOCK_DOOR)addch(CH_LIGHT_SHADE);
 								else if((map[x][y][locz].siegeflag & SIEGEFLAG_HEAVYUNIT)&&
 									(location[cursite]->compound_walls & COMPOUND_CAMERAS)&&!location[cursite]->siege.cameras_off)
 									{
 									set_color(COLOR_RED,COLOR_BLACK,1);
-									addch(157);
+									addch(CH_YEN_SIGN);
 									}
 								else if((map[x][y][locz].siegeflag & SIEGEFLAG_UNIT)&&
 									(location[cursite]->compound_walls & COMPOUND_CAMERAS)&&!location[cursite]->siege.cameras_off)
@@ -4622,7 +4634,7 @@ void mode_site(void)
 							{
 							set_color(COLOR_BLACK,COLOR_BLACK,1);
 							move(y+1,x+5);
-							addch(219);
+							addch(CH_FULL_BLOCK);
 							}
 						}
 					}
@@ -5157,7 +5169,7 @@ void mode_site(void)
 
 							refresh();
 
-							char c=getch();
+							int c=getch();
 							translategetch(c);
 
 							if(c=='y')
@@ -5198,7 +5210,7 @@ void mode_site(void)
 							addstr("Force it open? (Yes or No)");
 
 							refresh();
-							char c=getch();
+							int c=getch();
 							translategetch(c);
 
 							if(c=='y')
@@ -5268,7 +5280,7 @@ void mode_site(void)
 							}
 						}
 
-					int sx,sy,sz;
+					int sx=0,sy=0,sz=0;
 					for(u=0;u<unitx.size();u++)
 						{
 						sz=0;
@@ -6092,7 +6104,7 @@ void burnflag(void)
 
 			for(x=6;x<16;x++)
 				{
-				flag[x][p][0]=220;
+				flag[x][p][0]=CH_LOWER_HALF_BLOCK;
 				flag[x][p][3]=1;
 				flag[x][p][1]=COLOR_WHITE;
 				flag[x][p][2]=COLOR_RED;
@@ -6104,14 +6116,14 @@ void burnflag(void)
 				{
 				if(p<6)
 					{
-					flag[x][p][0]=220;
+					flag[x][p][0]=CH_LOWER_HALF_BLOCK;
 					flag[x][p][1]=COLOR_WHITE;
 					flag[x][p][2]=COLOR_RED;
 					flag[x][p][3]=1;
 					}
 				else
 					{
-					flag[x][p][0]=223;
+					flag[x][p][0]=CH_UPPER_HALF_BLOCK;
 					flag[x][p][1]=COLOR_RED;
 					flag[x][p][2]=COLOR_BLACK;
 					flag[x][p][3]=0;
@@ -6122,7 +6134,7 @@ void burnflag(void)
 
 	x=LCSrandom(16);
 	y=LCSrandom(7);
-	flag[x][y][0]=178;
+	flag[x][y][0]=CH_DARK_SHADE;
 	flag[x][y][1]=COLOR_YELLOW;
 	flag[x][y][2]=COLOR_BLACK;
 	flag[x][y][3]=1;
@@ -6137,25 +6149,25 @@ void burnflag(void)
 				{
 				for(y=0;y<7;y++)
 					{
-					if(flag[x][y][0]==179)flag[x][y][0]--;
-					else if(flag[x][y][0]==178)
+					if(flag[x][y][0]==CH_BOX_DRAWINGS_LIGHT_VERTICAL)flag[x][y][0]--;
+					else if(flag[x][y][0]==CH_DARK_SHADE)
 						{
-						flag[x][y][0]=177;
+						flag[x][y][0]=CH_MEDIUM_SHADE;
 						flag[x][y][1]=COLOR_RED;
 						flag[x][y][2]=COLOR_BLACK;
 						flag[x][y][3]=0;
 						}
-					else if(flag[x][y][0]==177)
+					else if(flag[x][y][0]==CH_MEDIUM_SHADE)
 						{
-						flag[x][y][0]=176;
+						flag[x][y][0]=CH_LIGHT_SHADE;
 						flag[x][y][1]=COLOR_BLACK;
 						flag[x][y][2]=COLOR_BLACK;
 						flag[x][y][3]=1;
 						}
-					else if(flag[x][y][0]==176)
+					else if(flag[x][y][0]==CH_LIGHT_SHADE)
 						{
 						flagparts--;
-						flag[x][y][0]=219;
+						flag[x][y][0]=CH_FULL_BLOCK;
 						flag[x][y][1]=COLOR_BLACK;
 						flag[x][y][2]=COLOR_BLACK;
 						flag[x][y][3]=0;
@@ -6184,35 +6196,35 @@ void burnflag(void)
 			x=LCSrandom(16);
 			y=LCSrandom(7);
 			char conf=0;
-			if(flag[x][y][0]==':'||flag[x][y][0]==223||flag[x][y][0]==220)
+			if(flag[x][y][0]==':'||flag[x][y][0]==CH_UPPER_HALF_BLOCK||flag[x][y][0]==220)
 				{
 				if(x>0)
 					{
 					if(flag[x-1][y][0]!=':'&&
-						flag[x-1][y][0]!=223&&
-						flag[x-1][y][0]!=220)conf=1;
+						flag[x-1][y][0]!=CH_UPPER_HALF_BLOCK&&
+						flag[x-1][y][0]!=CH_LOWER_HALF_BLOCK)conf=1;
 					}
 				if(x<15)
 					{
 					if(flag[x+1][y][0]!=':'&&
-						flag[x+1][y][0]!=223&&
-						flag[x+1][y][0]!=220)conf=1;
+						flag[x+1][y][0]!=CH_UPPER_HALF_BLOCK&&
+						flag[x+1][y][0]!=CH_LOWER_HALF_BLOCK)conf=1;
 					}
 				if(y>0)
 					{
 					if(flag[x][y-1][0]!=':'&&
-						flag[x][y-1][0]!=223&&
-						flag[x][y-1][0]!=220)conf=1;
+						flag[x][y-1][0]!=CH_UPPER_HALF_BLOCK&&
+						flag[x][y-1][0]!=CH_LOWER_HALF_BLOCK)conf=1;
 					}
 				if(y<6)
 					{
 					if(flag[x][y+1][0]!=':'&&
-						flag[x][y+1][0]!=223&&
-						flag[x][y+1][0]!=220)conf=1;
+						flag[x][y+1][0]!=CH_UPPER_HALF_BLOCK&&
+						flag[x][y+1][0]!=CH_LOWER_HALF_BLOCK)conf=1;
 					}
 				if(conf)
 					{
-					flag[x][y][0]=179;
+					flag[x][y][0]=CH_BOX_DRAWINGS_LIGHT_VERTICAL;
 					flag[x][y][1]=COLOR_YELLOW;
 					flag[x][y][2]=COLOR_BLACK;
 					flag[x][y][3]=1;
@@ -6370,7 +6382,7 @@ void stopevil(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -6498,13 +6510,13 @@ void printsitemap(int x,int y,int z)
 			{
 			if(map[x][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 			else set_color(COLOR_WHITE,COLOR_BLACK,0);
-			move(py+4,px);addch(219);
-			move(py+4,px+1);addch(219);
-			move(py+4,px+2);addch(219);
-			move(py+4,px+3);addch(219);
-			move(py+4,px+4);addch(219);
-			move(py+4,px+5);addch(219);
-			move(py+4,px+6);addch(219);
+			move(py+4,px);addch(CH_FULL_BLOCK);
+			move(py+4,px+1);addch(CH_FULL_BLOCK);
+			move(py+4,px+2);addch(CH_FULL_BLOCK);
+			move(py+4,px+3);addch(CH_FULL_BLOCK);
+			move(py+4,px+4);addch(CH_FULL_BLOCK);
+			move(py+4,px+5);addch(CH_FULL_BLOCK);
+			move(py+4,px+6);addch(CH_FULL_BLOCK);
 			}
 		else
 			{
@@ -6520,13 +6532,13 @@ void printsitemap(int x,int y,int z)
 			{
 			if(map[x][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 			else set_color(COLOR_WHITE,COLOR_BLACK,0);
-			move(py,px);addch(219);
-			move(py,px+1);addch(219);
-			move(py,px+2);addch(219);
-			move(py,px+3);addch(219);
-			move(py,px+4);addch(219);
-			move(py,px+5);addch(219);
-			move(py,px+6);addch(219);
+			move(py,px);addch(CH_FULL_BLOCK);
+			move(py,px+1);addch(CH_FULL_BLOCK);
+			move(py,px+2);addch(CH_FULL_BLOCK);
+			move(py,px+3);addch(CH_FULL_BLOCK);
+			move(py,px+4);addch(CH_FULL_BLOCK);
+			move(py,px+5);addch(CH_FULL_BLOCK);
+			move(py,px+6);addch(CH_FULL_BLOCK);
 			}
 		else
 			{
@@ -6542,11 +6554,11 @@ void printsitemap(int x,int y,int z)
 			{
 			if(map[x][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 			else set_color(COLOR_WHITE,COLOR_BLACK,0);
-			move(py,px+6);addch(219);
-			move(py+1,px+6);addch(219);
-			move(py+2,px+6);addch(219);
-			move(py+3,px+6);addch(219);
-			move(py+4,px+6);addch(219);
+			move(py,px+6);addch(CH_FULL_BLOCK);
+			move(py+1,px+6);addch(CH_FULL_BLOCK);
+			move(py+2,px+6);addch(CH_FULL_BLOCK);
+			move(py+3,px+6);addch(CH_FULL_BLOCK);
+			move(py+4,px+6);addch(CH_FULL_BLOCK);
 			}
 		else
 			{
@@ -6562,11 +6574,11 @@ void printsitemap(int x,int y,int z)
 			{
 			if(map[x][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 			else set_color(COLOR_WHITE,COLOR_BLACK,0);
-			move(py,px);addch(219);
-			move(py+1,px);addch(219);
-			move(py+2,px);addch(219);
-			move(py+3,px);addch(219);
-			move(py+4,px);addch(219);
+			move(py,px);addch(CH_FULL_BLOCK);
+			move(py+1,px);addch(CH_FULL_BLOCK);
+			move(py+2,px);addch(CH_FULL_BLOCK);
+			move(py+3,px);addch(CH_FULL_BLOCK);
+			move(py+4,px);addch(CH_FULL_BLOCK);
 			}
 		else
 			{
@@ -6584,23 +6596,23 @@ void printsitemap(int x,int y,int z)
 				{
 				if(map[x][y-1][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py,px);addch(219);
-				move(py+1,px);addch(219);
-				move(py+2,px);addch(219);
-				move(py+3,px);addch(219);
-				move(py+4,px);addch(219);
+				move(py,px);addch(CH_FULL_BLOCK);
+				move(py+1,px);addch(CH_FULL_BLOCK);
+				move(py+2,px);addch(CH_FULL_BLOCK);
+				move(py+3,px);addch(CH_FULL_BLOCK);
+				move(py+4,px);addch(CH_FULL_BLOCK);
 				}
 			if(!(map[x+1][y][z].flag & SITEBLOCK_BLOCK))
 				{
 				if(map[x+1][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py+4,px);addch(219);
-				move(py+4,px+1);addch(219);
-				move(py+4,px+2);addch(219);
-				move(py+4,px+3);addch(219);
-				move(py+4,px+4);addch(219);
-				move(py+4,px+5);addch(219);
-				move(py+4,px+6);addch(219);
+				move(py+4,px);addch(CH_FULL_BLOCK);
+				move(py+4,px+1);addch(CH_FULL_BLOCK);
+				move(py+4,px+2);addch(CH_FULL_BLOCK);
+				move(py+4,px+3);addch(CH_FULL_BLOCK);
+				move(py+4,px+4);addch(CH_FULL_BLOCK);
+				move(py+4,px+5);addch(CH_FULL_BLOCK);
+				move(py+4,px+6);addch(CH_FULL_BLOCK);
 				}
 			}
 		else
@@ -6619,23 +6631,23 @@ void printsitemap(int x,int y,int z)
 				{
 				if(map[x][y+1][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py,px);addch(219);
-				move(py+1,px);addch(219);
-				move(py+2,px);addch(219);
-				move(py+3,px);addch(219);
-				move(py+4,px);addch(219);
+				move(py,px);addch(CH_FULL_BLOCK);
+				move(py+1,px);addch(CH_FULL_BLOCK);
+				move(py+2,px);addch(CH_FULL_BLOCK);
+				move(py+3,px);addch(CH_FULL_BLOCK);
+				move(py+4,px);addch(CH_FULL_BLOCK);
 				}
 			if(!(map[x+1][y][z].flag & SITEBLOCK_BLOCK))
 				{
 				if(map[x+1][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py,px);addch(219);
-				move(py,px+1);addch(219);
-				move(py,px+2);addch(219);
-				move(py,px+3);addch(219);
-				move(py,px+4);addch(219);
-				move(py,px+5);addch(219);
-				move(py,px+6);addch(219);
+				move(py,px);addch(CH_FULL_BLOCK);
+				move(py,px+1);addch(CH_FULL_BLOCK);
+				move(py,px+2);addch(CH_FULL_BLOCK);
+				move(py,px+3);addch(CH_FULL_BLOCK);
+				move(py,px+4);addch(CH_FULL_BLOCK);
+				move(py,px+5);addch(CH_FULL_BLOCK);
+				move(py,px+6);addch(CH_FULL_BLOCK);
 				}
 			}
 		else
@@ -6654,23 +6666,23 @@ void printsitemap(int x,int y,int z)
 				{
 				if(map[x][y-1][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py,px+6);addch(219);
-				move(py+1,px+6);addch(219);
-				move(py+2,px+6);addch(219);
-				move(py+3,px+6);addch(219);
-				move(py+4,px+6);addch(219);
+				move(py,px+6);addch(CH_FULL_BLOCK);
+				move(py+1,px+6);addch(CH_FULL_BLOCK);
+				move(py+2,px+6);addch(CH_FULL_BLOCK);
+				move(py+3,px+6);addch(CH_FULL_BLOCK);
+				move(py+4,px+6);addch(CH_FULL_BLOCK);
 				}
 			if(!(map[x-1][y][z].flag & SITEBLOCK_BLOCK))
 				{
 				if(map[x-1][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py+4,px);addch(219);
-				move(py+4,px+1);addch(219);
-				move(py+4,px+2);addch(219);
-				move(py+4,px+3);addch(219);
-				move(py+4,px+4);addch(219);
-				move(py+4,px+5);addch(219);
-				move(py+4,px+6);addch(219);
+				move(py+4,px);addch(CH_FULL_BLOCK);
+				move(py+4,px+1);addch(CH_FULL_BLOCK);
+				move(py+4,px+2);addch(CH_FULL_BLOCK);
+				move(py+4,px+3);addch(CH_FULL_BLOCK);
+				move(py+4,px+4);addch(CH_FULL_BLOCK);
+				move(py+4,px+5);addch(CH_FULL_BLOCK);
+				move(py+4,px+6);addch(CH_FULL_BLOCK);
 				}
 			}
 		else
@@ -6689,23 +6701,23 @@ void printsitemap(int x,int y,int z)
 				{
 				if(map[x][y+1][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py,px+6);addch(219);
-				move(py+1,px+6);addch(219);
-				move(py+2,px+6);addch(219);
-				move(py+3,px+6);addch(219);
-				move(py+4,px+6);addch(219);
+				move(py,px+6);addch(CH_FULL_BLOCK);
+				move(py+1,px+6);addch(CH_FULL_BLOCK);
+				move(py+2,px+6);addch(CH_FULL_BLOCK);
+				move(py+3,px+6);addch(CH_FULL_BLOCK);
+				move(py+4,px+6);addch(CH_FULL_BLOCK);
 				}
 			if(!(map[x-1][y][z].flag & SITEBLOCK_BLOCK))
 				{
 				if(map[x-1][y][z].flag & SITEBLOCK_BLOODY2)set_color(COLOR_RED,COLOR_BLACK,0);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
-				move(py,px);addch(219);
-				move(py,px+1);addch(219);
-				move(py,px+2);addch(219);
-				move(py,px+3);addch(219);
-				move(py,px+4);addch(219);
-				move(py,px+5);addch(219);
-				move(py,px+6);addch(219);
+				move(py,px);addch(CH_FULL_BLOCK);
+				move(py,px+1);addch(CH_FULL_BLOCK);
+				move(py,px+2);addch(CH_FULL_BLOCK);
+				move(py,px+3);addch(CH_FULL_BLOCK);
+				move(py,px+4);addch(CH_FULL_BLOCK);
+				move(py,px+5);addch(CH_FULL_BLOCK);
+				move(py,px+6);addch(CH_FULL_BLOCK);
 				}
 			}
 		else
@@ -11053,7 +11065,7 @@ void equip(vector<itemst *> &loot,int loc)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c>='a'&&c<='r')
@@ -11068,7 +11080,7 @@ void equip(vector<itemst *> &loot,int loc)
 
 				refresh();
 
-				char c=getch();
+				int c=getch();
 				translategetch(c);
 
 				if(c>='1'&&c<='6')
@@ -11172,7 +11184,7 @@ void equip(vector<itemst *> &loot,int loc)
 
 			refresh();
 
-			char c=getch();
+			int c=getch();
 			translategetch(c);
 
 			if(c>='1'&&c<='6')
@@ -11283,7 +11295,8 @@ void getclip(char *str,int clip)
 		}
 }
 
-void save(void)
+
+void savegame(char *str)
 {
 	char dummy_c;
 	int dummy;
@@ -11291,7 +11304,7 @@ void save(void)
 	HANDLE h;
 	int l;
 	
-	h=LCSCreateFile("save.dat", LCSIO_WRITE);
+	h=LCSCreateFile(str, LCSIO_WRITE);
 	if(h!=NULL)
 		{
 		WriteFile(h,&version,sizeof(unsigned long),&numbytes,NULL);
@@ -11487,6 +11500,17 @@ void save(void)
 		CloseHandle(h);
 		}
 }
+
+void save(void)
+{
+ savegame("save.dat");
+}
+
+void autosave(void)
+{
+ savegame("autosave.dat");
+}
+
 
 char load(void)
 {
@@ -11769,7 +11793,7 @@ void choose_buyer(short &buyer)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==10)return;
@@ -12002,7 +12026,7 @@ char talk(creaturest &a,int t)
 		clearmessagearea();
 		clearmaparea();
 
-		char c='a';
+		int c='a';
 		if(talkmode!=TALKMODE_ISSUES)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -12094,7 +12118,7 @@ char talk(creaturest &a,int t)
 					do
 						{
 						refresh();
-						char c=getch();
+						int c=getch();
 						translategetch(c);
 						if(c>='a'&&c<='z')
 							{
@@ -12786,7 +12810,7 @@ void kidnapattempt(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==10)return;
@@ -12851,7 +12875,7 @@ void kidnapattempt(void)
 						}
 
 					refresh();
-					char c=getch();
+					int c=getch();
 					translategetch(c);
 					if(c>='a'&&c<='z')
 						{
@@ -13589,7 +13613,7 @@ void special_lab_cosmetics_cagedanimals(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -13635,7 +13659,7 @@ void special_nuclear_onoff(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -13678,7 +13702,7 @@ void special_lab_genetic_cagedanimals(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -13762,7 +13786,7 @@ void special_policestation_lockup(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -13825,7 +13849,7 @@ void special_courthouse_lockup(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -13904,7 +13928,7 @@ void special_courthouse_jury(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14060,7 +14084,7 @@ void special_prison_control(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14130,7 +14154,7 @@ void special_intel_supercomputer(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14190,7 +14214,7 @@ void special_sweatshop_equipment(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14228,7 +14252,7 @@ void special_polluter_equipment(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14268,7 +14292,7 @@ void special_house_photos(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14328,7 +14352,7 @@ void special_corporate_files(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14403,7 +14427,7 @@ void special_radio_broadcaststudio(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -14446,7 +14470,7 @@ void special_news_broadcaststudio(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='y')
@@ -15414,7 +15438,7 @@ char liberalagenda(char won)
 		do
 			{
 			refresh();
-			char c=getch();
+			int c=getch();
 			translategetch(c);
 
 			if(c=='l')break;
@@ -15431,7 +15455,7 @@ char liberalagenda(char won)
 		do
 			{
 			refresh();
-			char c=getch();
+			int c=getch();
 			translategetch(c);
 
 			if(c=='l')break;
@@ -15448,7 +15472,7 @@ char liberalagenda(char won)
 		do
 			{
 			refresh();
-			char c=getch();
+			int c=getch();
 			translategetch(c);
 
 			if(c=='d')
@@ -16416,7 +16440,7 @@ void passmonth(char &clearformess,char canseethings)
 				addstr(location[pool[p]->location]->name);
 				addstr(".");
 
-				int hs;
+				int hs=-1;
 				for(int l=0;l<location.size();l++)
 					{
 					if(location[l]->type==SITE_RESIDENTIAL_SHELTER)
@@ -16425,6 +16449,11 @@ void passmonth(char &clearformess,char canseethings)
 						break;
 						}
 					}
+				if (hs==-1)
+				{
+					//TODO: Error unable to find location
+					hs=0;
+				}
 
 				if(location[pool[p]->base]->siege.siege)
 					{
@@ -16620,7 +16649,7 @@ void elections(char clearformess,char canseethings)
 	//SENATE
 	if(year%2==0)
 		{
-		int senmod;
+		int senmod=-1;
 		if(year%6==0)
 			{
 			senmod=0;
@@ -16633,7 +16662,7 @@ void elections(char clearformess,char canseethings)
 			{
 			senmod=2;
 			}
-
+			
 		if(canseethings)
 			{
 			erase();
@@ -17007,7 +17036,7 @@ void elections(char clearformess,char canseethings)
 		if(canseethings)
 			{
 			move(p*3+2,0);
-			int propnum;
+			int propnum=0;
 			switch(p)
 				{
 				case 0:propnum=2*(17-LCSrandom(2)*6)*(19-LCSrandom(2)*6);break;
@@ -17990,7 +18019,7 @@ void tossjustices(char canseethings)
 		do
 			{
 			refresh();
-			char c=getch();
+			int c=getch();
 			translategetch(c);
 			if(c=='c')break;
 			}while(1);
@@ -18079,7 +18108,7 @@ void reaganify(char canseethings)
 		do
 			{
 			refresh();
-			char c=getch();
+			int c=getch();
 			translategetch(c);
 			if(c=='c')break;
 			}while(1);
@@ -19170,7 +19199,7 @@ int choosespecialedition(char &clearformess)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c>='a'&&c<='r')
@@ -19360,7 +19389,7 @@ unsigned long fenceselect(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c>='a'&&c<='r')
@@ -20381,17 +20410,11 @@ void siegecheck(char canseethings)
 						}
 					location[l]->loot.clear();
 
-					for(int v=vehicle.size()-1;v>=0;v--)
+					for(int v=(int)vehicle.size()-1;v>=0;v--)
 						{
 						if(vehicle[v]->location==l)
 							{
-							for(int p=0;p<pool.size();p++)
-								{
-								if(pool[p]->pref_carid==vehicle[v]->id)
-									{
-									pool[p]->pref_carid=-1;
-									}
-								}
+							removecarprefs_pool(vehicle[v]->id);
 							delete vehicle[v];
 							vehicle.erase(vehicle.begin() + v);
 							}
@@ -21125,17 +21148,11 @@ void giveup(void)
 	//CONFISCATE MATERIAL
 	for(int l=0;l<location[loc]->loot.size();l++)delete location[loc]->loot[l];
 	location[loc]->loot.clear();
-	for(int v=vehicle.size()-1;v>=0;v--)
+	for(int v=(int)vehicle.size()-1;v>=0;v--)
 		{
 		if(vehicle[v]->location==loc)
 			{
-			for(int p=0;p<pool.size();p++)
-				{
-				if(pool[p]->pref_carid==vehicle[v]->id)
-					{
-					pool[p]->pref_carid=-1;
-					}
-				}
+			removecarprefs_pool(vehicle[v]->id);
 			delete vehicle[v];
 			vehicle.erase(vehicle.begin() + v);
 			}
@@ -21387,17 +21404,11 @@ void escapesiege(char won)
 			}
 		location[cursite]->loot.clear();
 
-		for(int v=vehicle.size()-1;v>=0;v--)
+		for(int v=(int)vehicle.size()-1;v>=0;v--)
 			{
 			if(vehicle[v]->location==cursite)
 				{
-				for(int p=0;p<pool.size();p++)
-					{
-					if(pool[p]->pref_carid==vehicle[v]->id)
-						{
-						pool[p]->pref_carid=-1;
-						}
-					}
+				removecarprefs_pool(vehicle[v]->id);
 				delete vehicle[v];
 				vehicle.erase(vehicle.begin() + v);
 				}
@@ -21533,7 +21544,7 @@ void conquertext(void)
 	do
 		{
 		refresh();
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='c')break;
@@ -22108,7 +22119,7 @@ void trial(creaturest &g)
 
 	short defense;
 
-	char c;
+	int c;
 	do
 		{
 		refresh();
@@ -23152,7 +23163,7 @@ void fullstatus(int p)
 		addstr("Press any other key to continue the Struggle");
 
 		refresh();
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(activesquad->squad[1]!=NULL&&(c==interface_pgup||c==interface_pgdn))
@@ -23572,7 +23583,7 @@ void makecharacter(void)
 
 		refresh();
 
-		char c;
+		int c;
 		do
 			{
 			c=getch();
@@ -23828,7 +23839,7 @@ void makecharacter(void)
 	newl=new locationst;
 		strcpy(newl->name,"On the Outskirts of the City");
 		strcpy(newl->shortname,"Outskirts");
-		newl->type=SITE_UDISTRICT;
+		newl->type=SITE_OUTOFTOWN;
 		newl->parent=-1;
 		newl->needcar=1;
 	location.push_back(newl);
@@ -24134,12 +24145,15 @@ void advanceday(char &clearformess,char canseethings)
 	int w=0;
 	int l2;
 
+	//Save the game to autosave.dat each day.
+	autosave();
+
 	//CLEAR CAR STATES
 	vector<long> caridused;
 	for(p=0;p<pool.size();p++)pool[p]->carid=-1;
 
 	//SHUFFLE AROUND THE SQUADLESS
-	int homes;
+	int homes=-1;
 	for(int l=0;l<location.size();l++)
 		{
 		if(location[l]->type==SITE_RESIDENTIAL_SHELTER)
@@ -24148,6 +24162,12 @@ void advanceday(char &clearformess,char canseethings)
 			break;
 			}
 		}
+		if (homes==-1)
+			{
+			//TODO: Error unable to find location
+			homes=0;
+			}
+		
 	for(p=0;p<pool.size();p++)
 		{
 		if(disbanding)break;
@@ -24325,21 +24345,27 @@ void advanceday(char &clearformess,char canseethings)
 							for(p=0;p<passenger.size();p++)
 								{
 								long v=id_getcar(squad[sq]->squad[passenger[p]]->carid);
-								if(driveskill(*squad[sq]->squad[passenger[p]],vehicle[v])>max&&
-									squad[sq]->squad[passenger[p]]->canwalk())
-									{
-									max=driveskill(*squad[sq]->squad[passenger[p]],vehicle[v]);
-									}
+								if(v >= 0) 
+								  {
+								    if(driveskill(*squad[sq]->squad[passenger[p]],vehicle[v])>max&&
+								  	  squad[sq]->squad[passenger[p]]->canwalk())
+								  	  {
+								  	    max=driveskill(*squad[sq]->squad[passenger[p]],vehicle[v]);
+									  }
+								  }
 								}
 							vector<int> goodp;
 							for(p=0;p<passenger.size();p++)
 								{
 								long v=id_getcar(squad[sq]->squad[passenger[p]]->carid);
-								if(driveskill(*squad[sq]->squad[passenger[p]],vehicle[v])==max&&
-									squad[sq]->squad[passenger[p]]->canwalk())
-									{
-									goodp.push_back(passenger[p]);
-									}
+								if(v >= 0) 
+								  {
+								    if(driveskill(*squad[sq]->squad[passenger[p]],vehicle[v])==max&&
+									  squad[sq]->squad[passenger[p]]->canwalk())
+									  {
+									  goodp.push_back(passenger[p]);
+									  }
+								  }
 								}
 
 							if(goodp.size()>0)
@@ -24357,19 +24383,25 @@ void advanceday(char &clearformess,char canseethings)
 						for(p=0;p<driver.size();p++)
 							{
 							long v=id_getcar(squad[sq]->squad[driver[p]]->carid);
-							if(driveskill(*squad[sq]->squad[driver[p]],vehicle[v])>max)
+							if (v >= 0)
+							  {
+							  if(driveskill(*squad[sq]->squad[driver[p]],vehicle[v])>max)
 								{
-								max=driveskill(*squad[sq]->squad[driver[p]],vehicle[v]);
+								  max=driveskill(*squad[sq]->squad[driver[p]],vehicle[v]);
 								}
+							  }
 							}
 						vector<int> goodp;
 						for(p=0;p<driver.size();p++)
 							{
 							long v=id_getcar(squad[sq]->squad[driver[p]]->carid);
-							if(driveskill(*squad[sq]->squad[driver[p]],vehicle[v])==max)
-								{
-								goodp.push_back(p);
-								}
+							if (v >= 0)
+							  {
+							  if(driveskill(*squad[sq]->squad[driver[p]],vehicle[v])==max)
+								  {
+								  goodp.push_back(p);
+								  }
+							  }
 							}
 
 						if(goodp.size()>0)
@@ -24528,7 +24560,7 @@ void advanceday(char &clearformess,char canseethings)
 						makedelimiter(8,0);
 						}
 
-					char c='t';
+					int c='t';
 
 					if(location[squad[sq]->activity.arg]->renting>=0&&
 						location[squad[sq]->activity.arg]->type==SITE_INDUSTRY_WAREHOUSE)
@@ -24557,9 +24589,9 @@ void advanceday(char &clearformess,char canseethings)
 						newsstory.push_back(ns);
 						mode_site(squad[sq]->activity.arg);
 						}
-					if(activesquad->squad[0]!=NULL)
+					if(squad[sq]->squad[0]!=NULL)
 						{
-						locatesquad(activesquad,activesquad->squad[0]->base);
+						locatesquad(squad[sq],squad[sq]->squad[0]->base);
 						}
 
 					clearformess=1;
@@ -24727,7 +24759,7 @@ void advanceday(char &clearformess,char canseethings)
 
 				if(date[d]->timeleft==0)
 					{
-					int hs;
+					int hs=-1;
 					for(int l=0;l<location.size();l++)
 						{
 						if(location[l]->type==SITE_RESIDENTIAL_SHELTER)
@@ -24736,6 +24768,11 @@ void advanceday(char &clearformess,char canseethings)
 							break;
 							}
 						}
+					if (hs==-1)
+					{
+						//TODO: Error unable to find location
+						hs=0;
+					}
 
 					if(location[pool[p]->base]->siege.siege)
 						{
@@ -24774,8 +24811,35 @@ void advanceday(char &clearformess,char canseethings)
 					pool[p]->dating=date[d]->timeleft;
 					if(pool[p]->dating>0)
 						{
-						//&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-							//gets rid of equipment if only member in squad!
+						//IF YOU ARE THE LAST PERSON IN YOUR SQUAD
+							//YOU HAVE TO DROP OFF THE EQUIPMENT WHEREVER YOUR BASE IS
+							//BECAUSE YOUR SQUAD IS ABOUT TO BE DESTROYED
+						if(pool[p]->squadid!=-1)
+							{
+							long sq=getsquad(pool[p]->squadid);
+							if(sq!=-1)
+								{
+								char hasmembers=0;
+								int p2,l;
+								for(p2=0;p2<6;p2++)
+									{
+									if(squad[sq]->squad[p2]!=NULL)hasmembers++;
+									}
+								if(hasmembers<=1)
+									{
+									if(pool[p]->location!=-1)
+										{
+										for(l=0;l<squad[sq]->loot.size();l++)
+											{
+											location[pool[p]->location]->loot.push_back(squad[sq]->loot[l]);
+											}
+										squad[sq]->loot.clear();
+										}
+									}
+								}
+							}
+
+						//NOW KICK THE DATER OUT OF THE SQUAD AND LOCATION
 						removesquadinfo(*pool[p]);
 						pool[p]->location=-1;
 						}
@@ -25302,7 +25366,7 @@ void review_mode(short mode)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -25351,7 +25415,7 @@ void review_mode(short mode)
 					addstr("Press any other key to continue the Struggle");
 
 					refresh();
-					char c=getch();
+					int c=getch();
 					translategetch(c);
 
 					if(temppool.size()>0&&(c==interface_pgup||c==interface_pgdn))
@@ -25437,7 +25501,7 @@ void hospital(int loc)
 		move(14,1);
 		addstr("0 - Show the squad's Liberal status");
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==10)break;
@@ -25520,6 +25584,7 @@ void hospital(int loc)
 								long v=id_getcar(activesquad->squad[p2]->carid);
 								if(v!=-1)
 									{
+									removecarprefs_pool(vehicle[v]->id);
 									delete vehicle[v];
 									vehicle.erase(vehicle.begin() + v);
 									}
@@ -25618,7 +25683,7 @@ void deptstore(int loc)
 		move(14,40);
 		addstr("# - Check the status of a squad Liberal");
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==10)break;
@@ -25744,7 +25809,7 @@ void halloweenstore(int loc)
 	do
 		{
 		int weaponbought=-1;
-		int armorbought=-1,armorbought2;
+		int armorbought=-1,armorbought2=-1;
 
 		erase();
 
@@ -25876,7 +25941,7 @@ void halloweenstore(int loc)
 		move(14,40);
 		addstr("# - Check the status of a squad Liberal");
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(in_halloween==1)
@@ -26270,7 +26335,7 @@ void pawnshop(int loc)
 		move(14,40);
 		addstr("# - Check the status of a squad Liberal");
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(in_fence)
@@ -26838,7 +26903,7 @@ void moveloot(vector<itemst *> &dest,vector<itemst *> &source)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c>='a'&&c<='r')
@@ -27023,7 +27088,7 @@ void activate(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -27177,7 +27242,7 @@ void activatebulk(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -27317,7 +27382,7 @@ void activate(creaturest *cr)
 		addstr("Enter - Nothing for now.");
 
 		refresh();
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c=='a')
@@ -27511,7 +27576,7 @@ void select_makeclothing(creaturest *cr)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -27622,7 +27687,7 @@ void select_tendhostage(creaturest *cr)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -27696,7 +27761,7 @@ long select_hostagefundinglevel(creaturest *cr,creaturest *hs)
 	addstr(".");
 
 	refresh();
-	char c=getch();
+	int c=getch();
 	translategetch(c);
 
 	if(c=='a')flevel=0;
@@ -30067,7 +30132,7 @@ long select_troublefundinglevel(creaturest *cr)
 	addstr(".");
 
 	refresh();
-	char c=getch();
+	int c=getch();
 	translategetch(c);
 
 	if(c=='a')flevel=0;
@@ -30183,7 +30248,7 @@ char carselect(creaturest &cr,short &cartype)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -30333,7 +30398,7 @@ char stealcar(creaturest &cr,char &clearformess)
 
 		refresh();
 
-		char c;
+		int c;
 
 		do
 			{
@@ -30935,7 +31000,7 @@ char maskselect(creaturest *cr,short &mask)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -31262,7 +31327,7 @@ void setvehicles(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch_cap(c);
 
 		if(c>='A'&&c<='R')
@@ -31277,7 +31342,7 @@ void setvehicles(void)
 
 				refresh();
 
-				char c=getch();
+				int c=getch();
 				translategetch(c);
 
 				if(c>='1'&&c<='6')
@@ -31307,7 +31372,7 @@ void setvehicles(void)
 
 				refresh();
 
-				char c=getch();
+				int c=getch();
 				translategetch(c);
 
 				if(c>='1'&&c<='6')
@@ -31725,7 +31790,7 @@ char chasesequence(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(partyalive==0&&c=='c')
@@ -31739,6 +31804,7 @@ char chasesequence(void)
 					long v=id_getcar(activesquad->squad[p]->carid);
 					if(v!=-1)
 						{
+						removecarprefs_pool(vehicle[v]->id);
 						delete vehicle[v];
 						vehicle.erase(vehicle.begin() + v);
 						}
@@ -31788,10 +31854,11 @@ char chasesequence(void)
 				{
 				for(int v=0;v<chaseseq.friendcar.size();v++)
 					{
-					for(int v2=0;v2<vehicle.size();v2++)
+					for(int v2=(int)vehicle.size()-1;v2>=0;v2--)
 						{
 						if(vehicle[v2]==chaseseq.friendcar[v])
 							{
+							removecarprefs_pool(vehicle[v2]->id);
 							delete vehicle[v2];
 							vehicle.erase(vehicle.begin() + v2);
 							}
@@ -32013,7 +32080,7 @@ char footchase(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(partyalive==0&&c=='c')
@@ -32027,6 +32094,7 @@ char footchase(void)
 					long v=id_getcar(activesquad->squad[p]->carid);
 					if(v!=-1)
 						{
+						removecarprefs_pool(vehicle[v]->id);
 						delete vehicle[v];
 						vehicle.erase(vehicle.begin() + v);
 						}
@@ -32480,12 +32548,15 @@ long driveskill(creaturest &cr,vehiclest *v)
 		case VEHICLE_SUV:
 		case VEHICLE_TAXICAB:
 		case VEHICLE_JEEP:
-			return 1;
+			vbonus=1;
+			break;
 		case VEHICLE_POLICECAR:
-			return 3;
+			vbonus=3;
+			break;
 		case VEHICLE_SPORTSCAR:
 		case VEHICLE_AGENTCAR:
-			return 5;
+			vbonus=5;
+			break;
 		}
 	return cr.attval(ATTRIBUTE_AGILITY)+cr.skill[SKILL_DRIVING]*3+vbonus;
 }
@@ -32791,10 +32862,11 @@ void crashfriendlycar(int v)
 		}
 
 	//GET RID OF CAR
-	for(int v2=0;v2<vehicle.size();v2++)
+	for(int v2=(int)vehicle.size()-1;v2>=0;v2--)
 		{
 		if(vehicle[v2]==chaseseq.friendcar[v])
 			{
+			removecarprefs_pool(vehicle[v2]->id);
 			delete vehicle[v2];
 			vehicle.erase(vehicle.begin() + v2);
 			break;
@@ -32881,10 +32953,11 @@ void chase_giveup(void)
 
 	for(int v=0;v<chaseseq.friendcar.size();v++)
 		{
-		for(int v2=0;v2<vehicle.size();v2++)
+		for(int v2=(int)vehicle.size()-1;v2>=0;v2--)
 			{
 			if(vehicle[v2]==chaseseq.friendcar[v])
 				{
+				removecarprefs_pool(vehicle[v2]->id);
 				delete vehicle[v2];
 				vehicle.erase(vehicle.begin() + v2);
 				}
@@ -33460,7 +33533,7 @@ char select_view(creaturest *cr,long &v)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -33559,7 +33632,7 @@ void investlocation(void)
 		move(16,1);
 		addstr("Enter - Done");
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==10)break;
@@ -34097,6 +34170,7 @@ void verifyworklocation(creaturest &cr)
 
 	if(swap)
 		{
+		//PICK A TYPE OF WORK LOCATION
 		do
 			{
 			cr.worklocation=LCSrandom(SITENUM);
@@ -34112,8 +34186,44 @@ void verifyworklocation(creaturest &cr)
 				goodlist.push_back(l);
 				}
 			}
+// Sadler - This line sometimes causes a memory fault
 
-		cr.worklocation=goodlist[LCSrandom(goodlist.size())];
+//          Only thing I can think of is if loop above didn'
+
+//          find any locations of type == to cr.worklocation
+
+//          My hunch is that some locations, such as the 1st four
+
+//          are special and cannot be used here..
+
+//		
+
+//	TODO There was a bug in the makecharacter() code where th
+
+//	SITE_OUTOFTOWN was not set properly. This was fixed but the bug here
+
+//	is still occuring, normally at the Latte Bar Downtown ;
+
+	if (goodlist.size()==0)
+
+              {
+
+               cr.worklocation=0;
+
+              }
+
+            else
+
+              {
+
+	   cr.worklocation=goodlist[LCSrandom(goodlist.size())];
+
+              }
+
+
+
+
+
 		}
 }
 
@@ -34791,7 +34901,7 @@ void displaystory(newsstoryst &ns)
 			{
 			move(y,x);
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
-			addch(219);
+			addch(CH_FULL_BLOCK);
 			}
 		}
 
@@ -34807,7 +34917,7 @@ void displaystory(newsstoryst &ns)
 				set_color(newstops[pap][x][y][1],
 					newstops[pap][x][y][2],
 					newstops[pap][x][y][3]);
-				addch(newstops[pap][x][y][0]);
+				addch(translateGraphicsChar(newstops[pap][x][y][0]));
 				}
 			}
 
@@ -34871,7 +34981,7 @@ void displaystory(newsstoryst &ns)
 		addplace[x][y]=1;
 		adnumber--;
 
-		int sx,ex,sy,ey;
+		int sx=0,ex=0,sy=0,ey=0;
 		if(x==0)
 			{
 			sx=0;
@@ -34898,14 +35008,14 @@ void displaystory(newsstoryst &ns)
 			ey=24;
 			}
 
-		unsigned char ch;
+		unsigned char ch='?';
 		switch(LCSrandom(6))
 			{
-			case 0:ch=176;break;
-			case 1:ch=177;break;
-			case 2:ch=178;break;
-			case 3:ch=219;break;
-			case 4:ch=197;break;
+			case 0:ch=CH_LIGHT_SHADE;break;
+			case 1:ch=CH_MEDIUM_SHADE;break;
+			case 2:ch=CH_DARK_SHADE;break;
+			case 3:ch=CH_FULL_BLOCK;break;
+			case 4:ch=CH_BOX_DRAWINGS_LIGHT_VERTICAL_AND_HORIZONTAL;break;
 			case 5:ch='*';break;
 			}
 
@@ -34921,7 +35031,7 @@ void displaystory(newsstoryst &ns)
 				if(y==sy||y==8||y==16||y==24||x==sx||x==ex)
 					{
 					move(y,x);
-					addch(ch);
+					addch(translateGraphicsChar(ch));
 					}
 				}
 			}
@@ -35730,7 +35840,7 @@ void displaystory(newsstoryst &ns)
 			}
 		}
 
-	char c;
+	int c;
 	do
 		{
 		refresh();
@@ -35837,14 +35947,14 @@ void displaycenterednewsfont(char *str,int y)
 					if(x2==5)
 						{
 						set_color(COLOR_WHITE,COLOR_BLACK,0);
-						addch(219);
+						addch(CH_FULL_BLOCK);
 						}
 					else
 						{
 						set_color(bigletters[p][x2][y2][1],
 							bigletters[p][x2][y2][2],
 							bigletters[p][x2][y2][3]);
-						addch(bigletters[p][x2][y2][0]);
+						addch(translateGraphicsChar(bigletters[p][x2][y2][0]));
 						}
 					}
 				}
@@ -35858,7 +35968,7 @@ void displaycenterednewsfont(char *str,int y)
 				for(int y2=0;y2<7;y2++)
 					{
 					move(y+y2,x+x2);
-					addch(219);
+					addch(CH_FULL_BLOCK);
 					}
 				}
 			x+=3;
@@ -35885,7 +35995,7 @@ void displaynewspicture(int p,int y)
 			set_color(newspic[p][x2][y2][1],
 				newspic[p][x2][y2][2],
 				newspic[p][x2][y2][3]);
-			addch(newspic[p][x2][y2][0]);
+			addch(translateGraphicsChar(newspic[p][x2][y2][0]));
 			}
 		}
 }
@@ -37409,7 +37519,7 @@ char completedate(datest &d,int p,char &clearformess)
 		do
 			{
 			refresh();
-			char c=getch();
+			int c=getch();
 			translategetch(c);
 
 			short aroll=LCSrandom(21)+pool[p]->attval(ATTRIBUTE_CHARISMA)*2+LCSrandom(pool[p]->skill[SKILL_PERSUASION]*2+1);
@@ -37648,7 +37758,7 @@ void reloadparty(void)
 
 		if(ammotype(activesquad->squad[p]->weapon.type)!=-1)
 			{
-			int ammomax;
+			int ammomax=2;
 			switch(ammotype(activesquad->squad[p]->weapon.type))
 				{
 				case CLIP_9:ammomax=15;break;
@@ -37726,7 +37836,7 @@ char confirmdisband(void)
 			addch(word[x]);
 			}
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if((c==word[pos])||((c+'A'-'a')==word[pos]))
@@ -37870,7 +37980,7 @@ int l = 0;
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -38002,7 +38112,7 @@ void promoteliberals(void)
 
 		refresh();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		//PAGE UP
@@ -38236,3 +38346,16 @@ void loadinitfile(void)
 		}
 	fseed.close();
 }
+
+//GETS RID OF CAR PREFERENCES FROM pool LIBERALS, BY CAR ID NUMBER
+void removecarprefs_pool(long carid)
+{
+	for(int p=0;p<pool.size();p++)
+		{
+		if(pool[p]->pref_carid==carid)
+			{
+			pool[p]->pref_carid=-1;
+			}
+		}
+}
+

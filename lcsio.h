@@ -27,6 +27,7 @@
 #ifdef WIN32
 #include <windows.h>
 #else
+#include <stdio.h>
 typedef FILE *HANDLE; 
 typedef unsigned long DWORD;
 #endif

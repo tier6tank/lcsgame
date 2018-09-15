@@ -19,6 +19,53 @@
 //    along with Liberal Crime Squad; if not, write to the Free Software				//
 //    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA			//
 //////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+* \file		compat.h
+*
+* \brief	Compatibility Functions to support ports to non-Windows Platforms
+*
+* $Author: sadler $
+* $Date: 2004/06/30 22:46:33 $
+* \version	$Name: HEAD $ $Revision: 1.3 $
+*
+* $Id: compat.h,v 1.3 2004/06/30 22:46:33 sadler Exp $
+*
+* <HR>
+* \b Liberal Crime Squad
+*
+* 
+* <HR>
+* 
+* \par Abstract
+* 
+* \par Portability Functions
+*
+* These functions are intended to replace explicit calls to Windows API.
+*
+* We can do the following:
+*
+* (a) Write alternative calls for the ports, keep Windows calls.
+* (b) Write portable alternatives for use by Windows and ports.
+* (c) Do (a) and (b) and decide what Windows does (API or portable)
+*     based on the value of a MACRO GO_PORTABLE.
+* 
+* compat.cpp is the place for non-trivial or more global functions,
+*
+*
+* <HR>
+*
+* \par History
+*
+* \par
+* $Log: compat.h,v $
+* Revision 1.3  2004/06/30 22:46:33  sadler
+* Moved itoa() from game into compat.cpp
+*
+*
+*/
+
+
  #ifndef HAS_SRTICMP
  // Portable equivalent of Windows stricmp() function.
  // This is strcmp() on lowercase versions of the
@@ -47,4 +94,14 @@ void msToItimerval(int ms, struct  itimerval *value);
 void pause_ms(int t);
 void alarmset(int t);
 void alarmwait();
+
+ #ifndef HAS_ITOA
+ // Portable equivalent of Windows itoa() function.
+ // Note the radix parameter is expected to be 10.
+ // The function is not fully ported and doesn't support
+ //other bases, it's just enough for this program to be
+ //ported.
+ // Ensure buffer is of sufficient size.
+ char *itoa(int value, char *buffer, int radix);
+ #endif
 

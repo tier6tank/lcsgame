@@ -25,15 +25,20 @@
   #include <string.h>
   #include <iostream>
   #include <fstream>
+  #ifdef __MINGW32__
+    #include <vector>
+    #include <io.h> //needed for unlink()
+  #else
   //Visual C++ .NET (7) includes the STL with vector, so we
   //will use that, otherwise the HP STL Vector.h will be used.
-  #if _MSC_VER > 1200
-    #define WIN32_DOTNET
-    #include <vector>
-  #else
-    #define WIN32_PRE_DOTNET
-    #include "vector.h"
-  #endif
+    #if _MSC_VER > 1200
+      #define WIN32_DOTNET
+      #include <vector>
+    #else
+      #define WIN32_PRE_DOTNET
+      #include "vector.h"
+    #endif
+  #endif 
   #include "curses.h"
   //undo PDCurses macros that break vector class
   #undef erase
@@ -93,7 +98,7 @@ using namespace std;
 #include "cursesmovie.h"
 extern CursesMoviest movie;
 void set_color(short f,short b,char bright);
-void translategetch(char &c);
+void translategetch(int &c);
 
 void filelistst::open_diskload(HANDLE &h)
 {
@@ -372,7 +377,7 @@ void CursesMoviest::playmovie(int x,int y)
 		//while(time+10>GetTickCount);
 		alarmwait();
 
-		char c=getch();
+		int c=getch();
 		translategetch(c);
 
 		if(c==10||c==32||c==27)timer=finalframe;
