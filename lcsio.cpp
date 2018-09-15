@@ -63,8 +63,16 @@ HANDLE LCSCreateFile(char *filename, enum LCSIOFlag flag)
 {
 HANDLE h;
 #ifdef WIN32
-	h=CreateFile(filename,GENERIC_READ|GENERIC_WRITE,
-	             0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+	if(flag==LCSIO_READ)
+		{
+		h=CreateFile(filename,GENERIC_READ|GENERIC_WRITE,
+					 0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+		}
+	else
+		{
+		h=CreateFile(filename,GENERIC_READ|GENERIC_WRITE,
+					 0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+		}
 
 	if(h==INVALID_HANDLE_VALUE)
 	{

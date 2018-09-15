@@ -1159,7 +1159,7 @@ short exec[EXECNUM];
 short execterm=1;
 char execname[EXECNUM][80];
 
-unsigned long version=30800;
+unsigned long version=30810;
 unsigned long lowestloadversion=30500;
 unsigned long lowestloadscoreversion=30001;
 
@@ -1933,7 +1933,7 @@ void mode_title(void)
 		}
 
 	set_color(COLOR_WHITE,COLOR_BLACK,1);
-	strcpy(str,"v3.08 Copyright (C) 2002-4, Tarn Adams");
+	strcpy(str,"v3.081 Copyright (C) 2002-4, Tarn Adams");
 	move(13,39-((strlen(str)-1)>>1));
 	addstr(str);
 	strcpy(str,"A Bay 12 Games Production");

@@ -1,7 +1,7 @@
 ================================================================================
                       Liberal Crime Squad Linux Notes
 ================================================================================
-2004-06-16 - Kevin Sadler (sadler@geodude.eclipse.co.uk)
+2004-06-16 - Kevin Sadler
 
 Version 3.08 of Liberal Crime Squad (LCS) has been ported to Linux and compiled 
 with the GNU g++ compiler (GCC 3.3.2) and linked with the ncurses library 
