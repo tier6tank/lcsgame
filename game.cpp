@@ -20,10 +20,12 @@
 //    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA			//
 //////////////////////////////////////////////////////////////////////////////////////////
 
-#include "vector.h"
-#include "curses.h"
 #include <windows.h>
 #include <string.h>
+#include <iostream.h>
+#include <fstream.h>
+#include "vector.h"
+#include "curses.h"
 
 using namespace std;
 
@@ -1110,6 +1112,9 @@ short postalarmtimer;
 long sitecrime;
 long cursite;
 
+short interface_pgup='[';
+short interface_pgdn=']';
+
 int day=1;
 
 #ifdef HIGHFUNDS
@@ -1495,6 +1500,8 @@ char completedate(datest &d,int p,char &clearformess);
 void updateworld_laws(short *law,short *oldlaw);
 void reloadparty(void);
 void imprison(creaturest &g);
+void addlocationname(locationst *loc);
+void loadinitfile(void);
 
 int main(int argc, char* argv[])
 {
@@ -1529,6 +1536,8 @@ int main(int argc, char* argv[])
 	raw_output(TRUE);
 
 	loadgraphics();
+
+	loadinitfile();
 
 	strcpy(slogan,"We need a slogan!");
 
@@ -1648,9 +1657,19 @@ unsigned long r_num(void)
 	return seed;
 }
 
-//IN CASE FUNKY KEYS ARE SENT IN, TRANSLATE THEM BACK
+//IN CASE FUNKY ARROW KEYS ARE SENT IN, TRANSLATE THEM BACK
 void translategetch(char &c)
 {
+	//if(c==-63)c='7';
+	//if(c==-62)c='8';
+	//if(c==-61)c='9';
+	//if(c==-60)c='4';
+	//if(c==-59)c='5';
+	//if(c==-58)c='6';
+	//if(c==-57)c='1';
+	//if(c==-56)c='2';
+	//if(c==-55)c='3';
+
 	if(c==-6)c='0';
 	if(c==-50)c='.';
 	if(c==-53)c=10;
@@ -1659,10 +1678,27 @@ void translategetch(char &c)
 	if(c==-49)c='*';
 	if(c==-54)c='/';
 
+	/*
+	if(c==2)c='2';
+	if(c==3)c='8';
+	if(c==4)c='4';
+	if(c==5)c='6';
+	*/
+
 	if(c>='A'&&c<='Z'){c-='A';c+='a';}
 }
 void translategetch_cap(char &c)
 {
+	//if(c==-63)c='7';
+	//if(c==-62)c='8';
+	//if(c==-61)c='9';
+	//if(c==-60)c='4';
+	//if(c==-59)c='5';
+	//if(c==-58)c='6';
+	//if(c==-57)c='1';
+	//if(c==-56)c='2';
+	//if(c==-55)c='3';
+
 	if(c==-6)c='0';
 	if(c==-50)c='.';
 	if(c==-53)c=10;
@@ -1670,6 +1706,13 @@ void translategetch_cap(char &c)
 	if(c==-48)c='-';
 	if(c==-49)c='*';
 	if(c==-54)c='/';
+
+	/*
+	if(c==2)c='2';
+	if(c==3)c='8';
+	if(c==4)c='4';
+	if(c==5)c='6';
+	*/
 }
 
 void mode_title(void)
@@ -1730,7 +1773,7 @@ void mode_title(void)
 		}
 
 	set_color(COLOR_WHITE,COLOR_BLACK,1);
-	strcpy(str,"v3.05 Copyright (C) 2002-4, Tarn Adams");
+	strcpy(str,"v3.06 Copyright (C) 2002-4, Tarn Adams");
 	move(13,39-((strlen(str)-1)>>1));
 	addstr(str);
 	strcpy(str,"A Bay 12 Games Production");
@@ -2733,7 +2776,14 @@ void review(void)
 		move(22,0);
 		addstr("Press a Letter to select a squad.  1-7 to view Liberal groups.");
 		move(23,0);
-		addstr("[] to view other Liberal pages.  Press U to Promote Liberals.");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.  Press U to Promote Liberals.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.  Press U to Promote Liberals.");
+			}
 		move(24,0);
 		addstr("Press Z to Assemble a New Squad.  Press T to Assign New Bases to the Squadless.");
 
@@ -2742,8 +2792,8 @@ void review(void)
 		char c=getch();
 		translategetch(c);
 
-		if(c=='['&&page>0)page--;
-		if(c==']'&&(page+1)*19<squad.size()+REVIEWMODENUM)page++;
+		if(c==interface_pgup&&page>0)page--;
+		if(c==interface_pgdn&&(page+1)*19<squad.size()+REVIEWMODENUM)page++;
 
 		if(c==10)return;
 
@@ -2912,7 +2962,14 @@ void assemblesquad(squadst *cursquad)
 		move(22,0);
 		addstr("Press a Letter to add or remove a Liberal from the squad.");
 		move(23,0);
-		addstr("[] to view other Liberal pages");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 		move(24,0);
 		if(squadsize>0)addstr("1 - The squad is ready.");
 		else addstr("1 - I need no squad!");
@@ -2927,9 +2984,9 @@ void assemblesquad(squadst *cursquad)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<temppool.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<temppool.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -3801,7 +3858,7 @@ void mode_site(void)
 			{
 			set_color(COLOR_RED,COLOR_BLACK,1);
 			move(0,0);
-			addstr(location[cursite]->name);
+			addlocationname(location[cursite]);
 			addstr(", Level ");
 			char num[20];
 			itoa(locz+1,num,10);
@@ -3812,7 +3869,7 @@ void mode_site(void)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(0,0);
-			addstr(location[cursite]->name);
+			addlocationname(location[cursite]);
 			addstr(", Level ");
 			char num[20];
 			itoa(locz+1,num,10);
@@ -6059,7 +6116,7 @@ void stopevil(void)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(8,0);
-			addstr(location[loc]->name);
+			addlocationname(location[loc]);
 			}
 
 		int y=10;
@@ -6069,7 +6126,9 @@ void stopevil(void)
 			move(y,0);
 			addch(y-10+(int)'A');
 			addstr(" - ");
-			addstr(location[temploc[p]]->name);
+
+			addlocationname(location[temploc[p]]);
+
 			if(temploc[p]==activesquad->squad[0]->location)
 				{
 				set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -6107,13 +6166,27 @@ void stopevil(void)
 		if(page>0)
 			{
 			move(10,60);
-			addstr("[ - Previous");
+			if(interface_pgup=='[')
+				{
+				addstr("[ - Previous");
+				}
+			else
+				{
+				addstr("PGUP - Previous");
+				}
 			}
 		//PAGE DOWN
 		if((page+1)*11<temploc.size())
 			{
 			move(20,60);
-			addstr("] - Next");
+			if(interface_pgup=='[')
+				{
+				addstr("] - Next");
+				}
+			else
+				{
+				addstr("PGDN - Next");
+				}
 			}
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -6127,9 +6200,9 @@ void stopevil(void)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*11<temploc.size())page++;
+		if(c==interface_pgdn&&(page+1)*11<temploc.size())page++;
 
 		if(c>='a'&&c<='k')
 			{
@@ -10751,13 +10824,27 @@ void equip(vector<itemst *> &loot,int loc)
 		if(page>0)
 			{
 			move(17,1);
-			addstr("[ - Previous");
+			if(interface_pgup=='[')
+				{
+				addstr("[ - Previous");
+				}
+			else
+				{
+				addstr("PGUP - Previous");
+				}
 			}
 		//PAGE DOWN
 		if((page+1)*18<loot.size())
 			{
 			move(17,53);
-			addstr("] - Next");
+			if(interface_pgup=='[')
+				{
+				addstr("] - Next");
+				}
+			else
+				{
+				addstr("PGDN - Next");
+				}
 			}
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -10975,9 +11062,9 @@ void equip(vector<itemst *> &loot,int loc)
 			}
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*18<loot.size())page++;
+		if(c==interface_pgdn&&(page+1)*18<loot.size())page++;
 
 		}while(1);
 }
@@ -17567,6 +17654,8 @@ void congress(char clearformess,char canseethings)
 					exec[EXEC_VP]+
 					exec[EXEC_STATE]+
 					exec[EXEC_ATTORNEY]+(short)random(9)-4)/4;
+				if(exec[EXEC_PRESIDENT]==2)vote=2;
+				if(exec[EXEC_PRESIDENT]==-2)vote=-2;
 
 				if(law[bill[c]]>vote && billdir[c]==-1)sign=1;
 				if(law[bill[c]]<vote && billdir[c]==1)sign=1;
@@ -18869,13 +18958,27 @@ int choosespecialedition(char &clearformess)
 		if(page>0)
 			{
 			move(17,1);
-			addstr("[ - Previous");
+			if(interface_pgup=='[')
+				{
+				addstr("[ - Previous");
+				}
+			else
+				{
+				addstr("PGUP - Previous");
+				}
 			}
 		//PAGE DOWN
 		if((page+1)*18<loottype.size())
 			{
 			move(17,53);
-			addstr("] - Next");
+			if(interface_pgup=='[')
+				{
+				addstr("] - Next");
+				}
+			else
+				{
+				addstr("PGDN - Next");
+				}
 			}
 
 		move(24,1);
@@ -18935,9 +19038,9 @@ int choosespecialedition(char &clearformess)
 			}
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*18<loottype.size())page++;
+		if(c==interface_pgdn&&(page+1)*18<loottype.size())page++;
 
 		}while(1);
 
@@ -19042,13 +19145,27 @@ unsigned long fenceselect(void)
 		if(page>0)
 			{
 			move(17,1);
-			addstr("[ - Previous");
+			if(interface_pgup=='[')
+				{
+				addstr("[ - Previous");
+				}
+			else
+				{
+				addstr("PGUP - Previous");
+				}
 			}
 		//PAGE DOWN
 		if((page+1)*18<activesquad->loot.size())
 			{
 			move(17,53);
-			addstr("] - Next");
+			if(interface_pgup=='[')
+				{
+				addstr("] - Next");
+				}
+			else
+				{
+				addstr("PGDN - Next");
+				}
 			}
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -19133,9 +19250,9 @@ unsigned long fenceselect(void)
 		if(c=='x')break;
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*18<activesquad->loot.size())page++;
+		if(c==interface_pgdn&&(page+1)*18<activesquad->loot.size())page++;
 
 		}while(1);
 
@@ -19990,7 +20107,7 @@ void siegecheck(char canseethings)
 						{
 						move(8,1);
 						addstr("The cops have surrounded the ");
-						addstr(location[l]->name);
+						addlocationname(location[l]);
 						addstr(".");
 						location[l]->siege.underattack=0;
 						}
@@ -19998,7 +20115,7 @@ void siegecheck(char canseethings)
 						{
 						move(8,1);
 						addstr("The cops are raiding the ");
-						addstr(location[l]->name);
+						addlocationname(location[l]);
 						addstr("!");
 						location[l]->siege.underattack=1;
 						}
@@ -20037,7 +20154,7 @@ void siegecheck(char canseethings)
 
 					move(8,1);
 					addstr("The cops have raided the ");
-					addstr(location[l]->name);
+					addlocationname(location[l]);
 					addstr(", an unoccupied safehouse.");
 
 					refresh();
@@ -20107,7 +20224,7 @@ void siegecheck(char canseethings)
 
 			move(8,1);
 			addstr("The Corporations are raiding the ");
-			addstr(location[l]->name);
+			addlocationname(location[l]);
 			addstr("!");
 
 			refresh();
@@ -20127,7 +20244,7 @@ void siegecheck(char canseethings)
 
 			move(8,1);
 			addstr("The CIA is raiding the ");
-			addstr(location[l]->name);
+			addlocationname(location[l]);
 			addstr("!");
 
 			if(location[l]->compound_walls & COMPOUND_CAMERAS)
@@ -20169,7 +20286,7 @@ void siegecheck(char canseethings)
 			addstr("Masses dissatisfied with your lack of respect for AM Radio");
 			move(9,1);
 			addstr("are storming the ");
-			addstr(location[l]->name);
+			addlocationname(location[l]);
 			addstr("!");
 
 			refresh();
@@ -20190,7 +20307,7 @@ void siegecheck(char canseethings)
 			addstr("Masses dissatisfied with your lack of respect for Cable News");
 			move(9,1);
 			addstr("are storming the ");
-			addstr(location[l]->name);
+			addlocationname(location[l]);
 			addstr("!");
 
 			refresh();
@@ -20799,7 +20916,7 @@ void giveup(void)
 		set_color(COLOR_WHITE,COLOR_BLACK,1);
 		move(1,1);
 		addstr("Everyone in the ");
-		addstr(location[loc]->name);
+		addlocationname(location[loc]);
 		addstr(" is slain.");
 		refresh();
 		getch();
@@ -22822,7 +22939,17 @@ void fullstatus(int p)
 
 		move(23,0);
 		addstr("Press N to change this Liberal's Code Name");
-		if(activesquad->squad[1]!=NULL)addstr(", [] to view the others");
+		if(activesquad->squad[1]!=NULL)
+			{
+			if(interface_pgup=='[')
+				{
+				addstr(", [] to view the others");
+				}
+			else
+				{
+				addstr(", PGUP/PGDN to view the others");
+				}
+			}
 		move(24,0);
 		addstr("Press any other key to continue the Struggle");
 
@@ -22830,10 +22957,10 @@ void fullstatus(int p)
 		char c=getch();
 		translategetch(c);
 
-		if(activesquad->squad[1]!=NULL&&(c=='['||c==']'))
+		if(activesquad->squad[1]!=NULL&&(c==interface_pgup||c==interface_pgdn))
 			{
 			int sx=1;
-			if(c=='[')sx=-1;
+			if(c==interface_pgup)sx=-1;
 			do
 				{
 				p=(p+6+sx)%6;
@@ -23900,7 +24027,7 @@ void advanceday(char &clearformess,char canseethings)
 				move(8,1);
 				addstr(squad[sq]->name);
 				addstr(" decided ");
-				addstr(location[squad[sq]->activity.arg]->name);
+				addlocationname(location[squad[sq]->activity.arg]);
 				addstr(" was too hot to risk.");
 
 				refresh();
@@ -24074,9 +24201,9 @@ void advanceday(char &clearformess,char canseethings)
 			//IF NEED CAR AND DON'T HAVE ONE...
 				//NOTE: SQUADS DON'T TAKE FREE CARS
 			if(location[squad[sq]->activity.arg]->needcar&&
-				activesquad->squad[0]!=NULL)
+				squad[sq]->squad[0]!=NULL)
 				{
-				if(activesquad->squad[0]->carid==-1)
+				if(squad[sq]->squad[0]->carid==-1)
 					{
 					if(clearformess)erase();
 					else
@@ -24087,7 +24214,7 @@ void advanceday(char &clearformess,char canseethings)
 					move(8,1);
 					addstr(squad[sq]->name);
 					addstr(" didn't have a car to get to ");
-					addstr(location[squad[sq]->activity.arg]->name);
+					addlocationname(location[squad[sq]->activity.arg]);
 					addstr(".");
 
 					refresh();
@@ -24114,7 +24241,7 @@ void advanceday(char &clearformess,char canseethings)
 					move(8,1);
 					addstr(squad[sq]->name);
 					addstr(" has arrived at ");
-					addstr(location[squad[sq]->activity.arg]->name);
+					addlocationname(location[squad[sq]->activity.arg]);
 					addstr(".");
 
 					refresh();
@@ -24152,7 +24279,7 @@ void advanceday(char &clearformess,char canseethings)
 					move(8,1);
 					addstr(squad[sq]->name);
 					addstr(" has arrived at ");
-					addstr(location[squad[sq]->activity.arg]->name);
+					addlocationname(location[squad[sq]->activity.arg]);
 					addstr(".");
 
 					refresh();
@@ -24180,14 +24307,14 @@ void advanceday(char &clearformess,char canseethings)
 						{
 						addstr(squad[sq]->name);
 						addstr(" looks around ");
-						addstr(location[squad[sq]->activity.arg]->name);
+						addlocationname(location[squad[sq]->activity.arg]);
 						addstr(".");
 						}
 					else
 						{
 						addstr(squad[sq]->name);
 						addstr(" has arrived at ");
-						addstr(location[squad[sq]->activity.arg]->name);
+						addlocationname(location[squad[sq]->activity.arg]);
 						addstr(".");
 						}
 
@@ -24960,9 +25087,16 @@ void review_mode(short mode)
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
 		move(22,0);
-		addstr("Press a Letter to View Status");
+		addstr("Press a Letter to View Status.");
 		move(23,0);
-		addstr("[] to view other Liberal pages");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 
 		refresh();
 
@@ -24970,9 +25104,9 @@ void review_mode(short mode)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<temppool.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<temppool.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -25000,7 +25134,17 @@ void review_mode(short mode)
 					move(23,0);
 					if(temppool[p]->align!=1)addstr("Press N to change this Automaton's Code Name");
 					else addstr("Press N to change this Liberal's Code Name");
-					if(temppool.size()>1)addstr(", [] to view the others");
+					if(temppool.size()>1)
+						{
+						if(interface_pgup=='[')
+							{
+							addstr(", [] to view the others");
+							}
+						else
+							{
+							addstr(", PGUP/PGDN to view the others");
+							}
+						}
 					move(24,0);
 					addstr("Press any other key to continue the Struggle");
 
@@ -25008,10 +25152,10 @@ void review_mode(short mode)
 					char c=getch();
 					translategetch(c);
 
-					if(temppool.size()>0&&(c=='['||c==']'))
+					if(temppool.size()>0&&(c==interface_pgup||c==interface_pgdn))
 						{
 						int sx=1;
-						if(c=='[')sx=-1;
+						if(c==interface_pgup)sx=-1;
 						p=(p+(int)temppool.size()+sx)%((int)temppool.size());
 						continue;
 						}
@@ -26301,16 +26445,8 @@ void locheader(void)
 
 	if(activesquad!=NULL)
 		{
-		if(location[activesquad->squad[0]->location]->front_business!=-1)
-			{
-			addstr(location[activesquad->squad[0]->location]->front_name);
-			addstr(", ");
-			}
-		else
-			{
-			addstr(location[activesquad->squad[0]->location]->name);
-			addstr(", ");
-			}
+		addlocationname(location[activesquad->squad[0]->location]);
+		addstr(", ");
 		}
 	else
 		{
@@ -26321,16 +26457,8 @@ void locheader(void)
 			}
 		else
 			{
-			if(location[selectedsiege]->front_business!=-1)
-				{
-				addstr(location[selectedsiege]->front_name);
-				addstr(", ");
-				}
-			else
-				{
-				addstr(location[selectedsiege]->name);
-				addstr(", ");
-				}
+			addlocationname(location[selectedsiege]);
+			addstr(", ");
 			}
 		}
 
@@ -26476,13 +26604,27 @@ void moveloot(vector<itemst *> &dest,vector<itemst *> &source)
 		if(page>0)
 			{
 			move(17,1);
-			addstr("[ - Previous");
+			if(interface_pgup=='[')
+				{
+				addstr("[ - Previous");
+				}
+			else
+				{
+				addstr("PGUP - Previous");
+				}
 			}
 		//PAGE DOWN
 		if((page+1)*18<source.size())
 			{
 			move(17,53);
-			addstr("] - Next");
+			if(interface_pgup=='[')
+				{
+				addstr("] - Next");
+				}
+			else
+				{
+				addstr("PGDN - Next");
+				}
 			}
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -26544,9 +26686,9 @@ void moveloot(vector<itemst *> &dest,vector<itemst *> &source)
 		if(c=='x')break;
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*18<source.size())page++;
+		if(c==interface_pgdn&&(page+1)*18<source.size())page++;
 
 		}while(1);
 
@@ -26665,7 +26807,14 @@ void activate(void)
 		move(22,0);
 		addstr("Press a Letter to Assign an Activity.");
 		move(23,0);
-		addstr("[] to view other Liberal pages.");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 		move(24,0);
 		addstr("Press Z to assign simple tasks in bulk.");
 
@@ -26675,9 +26824,9 @@ void activate(void)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<temppool.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<temppool.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -26814,7 +26963,14 @@ void activatebulk(void)
 		move(22,0);
 		addstr("Press a Letter to Assign an Activity.  Press a Number to select an Activity.");
 		move(23,0);
-		addstr("[] to view other Liberal pages.");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 
 		refresh();
 
@@ -26822,9 +26978,9 @@ void activatebulk(void)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<temppool.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<temppool.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -27141,7 +27297,14 @@ void select_makeclothing(creaturest *cr)
 		move(22,0);
 		addstr("Press a Letter to select a Type of Clothing");
 		move(23,0);
-		addstr("[] to view other Liberal pages");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 
 		refresh();
 
@@ -27149,9 +27312,9 @@ void select_makeclothing(creaturest *cr)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<armortype.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<armortype.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -27245,7 +27408,14 @@ void select_tendhostage(creaturest *cr)
 		move(22,0);
 		addstr("Press a Letter to select a Conservative");
 		move(23,0);
-		addstr("[] to view other Liberal pages");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 
 		refresh();
 
@@ -27253,9 +27423,9 @@ void select_tendhostage(creaturest *cr)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<temppool.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<temppool.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -29796,7 +29966,14 @@ char carselect(creaturest &cr,short &cartype)
 		move(22,0);
 		addstr("Press a Letter to select a Type of Car");
 		move(23,0);
-		addstr("[] to view other Liberal pages");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 
 		refresh();
 
@@ -29804,9 +29981,9 @@ char carselect(creaturest &cr,short &cartype)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<cart.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<cart.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -30537,7 +30714,14 @@ char maskselect(creaturest *cr,short &mask)
 		move(22,0);
 		addstr("Press a Letter to select a Mask");
 		move(23,0);
-		addstr("[] to view other Liberal pages");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 		move(24,0);
 		addstr("Z - Surprise ");
 		addstr(cr->name);
@@ -30549,9 +30733,9 @@ char maskselect(creaturest *cr,short &mask)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<masktype.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<masktype.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -30795,7 +30979,7 @@ void setvehicles(void)
 				{
 				if(activesquad->squad[p]==NULL)continue;
 				if(activesquad->squad[p]->alive&&
-					activesquad->squad[p]->pref_carid==l)
+					activesquad->squad[p]->pref_carid==vehicle[l]->id)
 					{
 					set_color(COLOR_GREEN,COLOR_BLACK,1);
 					break;
@@ -30804,7 +30988,7 @@ void setvehicles(void)
 			for(p=0;p<pool.size();p++)
 				{
 				if(pool[p]->squadid!=-1&&pool[p]->alive&&
-					pool[p]->pref_carid==l&&pool[p]->squadid!=activesquad->id)
+					pool[p]->pref_carid==vehicle[l]->id&&pool[p]->squadid!=activesquad->id)
 					{
 					set_color(COLOR_YELLOW,COLOR_BLACK,1);
 					break;
@@ -30832,13 +31016,27 @@ void setvehicles(void)
 		if(page>0)
 			{
 			move(17,1);
-			addstr("[ - Previous");
+			if(interface_pgup=='[')
+				{
+				addstr("[ - Previous");
+				}
+			else
+				{
+				addstr("PGUP - Previous");
+				}
 			}
 		//PAGE DOWN
 		if((page+1)*18<vehicle.size())
 			{
 			move(17,53);
-			addstr("] - Next");
+			if(interface_pgup=='[')
+				{
+				addstr("] - Next");
+				}
+			else
+				{
+				addstr("PGDN - Next");
+				}
 			}
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -30919,9 +31117,9 @@ void setvehicles(void)
 		if(c=='x')return;
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*18<vehicle.size())page++;
+		if(c==interface_pgdn&&(page+1)*18<vehicle.size())page++;
 
 		}while(1);
 }
@@ -31247,7 +31445,7 @@ char chasesequence(void)
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
 		move(0,0);
-		addstr(location[chaseseq.location]->name);
+		addlocationname(location[chaseseq.location]);
 
 		//PRINT PARTY
 		if(partyalive==0)party_status=-1;
@@ -31557,7 +31755,7 @@ char footchase(void)
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
 		move(0,0);
-		addstr(location[chaseseq.location]->name);
+		addlocationname(location[chaseseq.location]);
 
 		//PRINT PARTY
 		if(partyalive==0)party_status=-1;
@@ -33035,7 +33233,14 @@ char select_view(creaturest *cr,long &v)
 		move(22,0);
 		addstr("Press a Letter to select a Topic");
 		move(23,0);
-		addstr("[] to view other Liberal pages");
+		if(interface_pgup=='[')
+			{
+			addstr("[] to view other Liberal pages.");
+			}
+		else
+			{
+			addstr("PGUP/PGDN to view other Liberal pages.");
+			}
 
 		refresh();
 
@@ -33043,9 +33248,9 @@ char select_view(creaturest *cr,long &v)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*26<VIEWNUM-2)page++;
+		if(c==interface_pgdn&&(page+1)*26<VIEWNUM-2)page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -37423,7 +37628,14 @@ void squadlessbaseassign(void)
 		if(temppool.size()>19)
 			{
 			move(23,0);
-			addstr("[] to view other Liberal pages.");
+			if(interface_pgup=='[')
+				{
+				addstr("[] to view other Liberal pages.");
+				}
+			else
+				{
+				addstr("PGUP/PGDN to view other Liberal pages.");
+				}
 			}
 		if(temploc.size()>9)
 			{
@@ -37437,9 +37649,9 @@ void squadlessbaseassign(void)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page_lib>0)page_lib--;
+		if(c==interface_pgup&&page_lib>0)page_lib--;
 		//PAGE DOWN
-		if(c==']'&&(page_lib+1)*19<temppool.size())page_lib++;
+		if(c==interface_pgdn&&(page_lib+1)*19<temppool.size())page_lib++;
 
 		//PAGE UP
 		if(c==','&&page_loc>0)page_loc--;
@@ -37550,7 +37762,14 @@ void promoteliberals(void)
 		if(temppool.size()>19)
 			{
 			move(23,0);
-			addstr("[] to view other Liberal pages.");
+			if(interface_pgup=='[')
+				{
+				addstr("[] to view other Liberal pages.");
+				}
+			else
+				{
+				addstr("PGUP/PGDN to view other Liberal pages.");
+				}
 			}
 
 		refresh();
@@ -37559,9 +37778,9 @@ void promoteliberals(void)
 		translategetch(c);
 
 		//PAGE UP
-		if(c=='['&&page>0)page--;
+		if(c==interface_pgup&&page>0)page--;
 		//PAGE DOWN
-		if(c==']'&&(page+1)*19<temppool.size())page++;
+		if(c==interface_pgdn&&(page+1)*19<temppool.size())page++;
 
 		if(c>='a'&&c<='s')
 			{
@@ -37709,4 +37928,75 @@ void dispersalcheck(char &clearformess)
 
 	//MUST DO AN END OF GAME CHECK HERE BECAUSE OF DISPERSAL
 	endcheck(END_DISPERSED);
+}
+
+void addlocationname(locationst *loc)
+{
+	if(loc->front_business!=-1)
+		{
+		addstr(loc->front_name);
+		}
+	else
+		{
+		addstr(loc->name);
+		}
+}
+
+void loadinitfile(void)
+{
+	//LOAD OPTIONS IF POSSIBLE
+	::fstream fseed;
+	fseed.open("init.txt",ios::nocreate | ios::in,filebuf::sh_read);
+	if(fseed.is_open())
+		{
+		int count=0;
+		char str[200];
+		char word[3][205];
+		int wordnum,pos;
+		char begin;
+		while(fseed.getline(str,198)&&count<10000)
+			{
+			if(str[0]!='#')
+				{
+				wordnum=0;pos=0;begin=1;
+				for(int l=0;l<strlen(str);l++)
+					{
+					if(str[l]==' '||str[l]=='\t')
+						{
+						if(str[l+1]!=' '&&str[l+1]!='\t'&&!begin)
+							{
+							word[wordnum][pos]='\x0';
+							wordnum++;
+							pos=0;
+							}
+						continue;
+						}
+					if(wordnum>2)break;
+					word[wordnum][pos]=str[l];
+					pos++;
+					begin=0;
+					}
+				if(wordnum<=2)word[wordnum][pos]='\x0';
+
+				if(!stricmp(word[1],"="))
+					{
+					if(!stricmp(word[0],"pagekeys"))
+						{
+						if(!stricmp(word[2],"brackets"))
+							{
+							interface_pgup='[';
+							interface_pgdn=']';
+							}
+						else if(!stricmp(word[2],"page"))
+							{
+							interface_pgup=-61;
+							interface_pgdn=-55;
+							}
+						}
+					}
+				}
+			count++;
+			}
+		}
+	fseed.close();
 }
