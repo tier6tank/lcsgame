@@ -1,0 +1,6 @@
+Release Notes for LCS 3.05:
+
+I use verase() instead of erase() in the STL vector because erase() conflicts with
+a macro in PDCurses.  It's also possible that they are fighting over clear().
+
+Tarn Adams
