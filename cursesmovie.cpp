@@ -20,10 +20,56 @@
 //    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA			//
 //////////////////////////////////////////////////////////////////////////////////////////
 
-#include "vector.h"
-#include "curses.h"
-#include <windows.h>
+#ifdef WIN32
+  #include <windows.h>
+  #include <string.h>
+  #include <iostream>
+  #include <fstream>
+  //Visual C++ .NET (7) includes the STL with vector, so we
+  //will use that, otherwise the HP STL Vector.h will be used.
+  #if _MSC_VER > 1200
+    #define WIN32_DOTNET
+    #include <vector>
+  #else
+    #define WIN32_PRE_DOTNET
+    #include "vector.h"
+  #endif
+  #include "curses.h"
+  //undo PDCurses macros that break vector class
+  #undef erase
+  #undef clear
+  
+  #define HAS_ITOA
+  #define HAS_STRICMP
+#else
+  #include <vector>
+  #include <string.h>
+  #include <iostream>
+  #include <fstream>
+  #include <ctype.h>
+  #define GO_PORTABLE
+  #ifdef XCURSES
+    #define HAVE_PROTO 1
+    #define CPLUSPLUS  1
+    /* Try these PDCurses/Xcurses options later...
+    #define FAST_VIDEO 
+    #define REGISTERWINDOWS
+    */
+    #include <xcurses.h> //This is the X11 Port of PDCurses
+  //undo PDCurses macros that break vector class
+    #undef erase
+    #undef clear
+  #else
+    #ifdef NCURSES
+      #include <ncurses.h>
+    #else     
+      #include <curses.h>
+    #endif  
+  #endif  
+#endif
 #include <string.h>
+#include "lcsio.h"
+#include "compat.h"
 
 #define BIT1 1
 #define BIT2 2
@@ -129,11 +175,12 @@ void filelistst::smartappend(filelistst &list2)
 void CursesMoviest::savemovie(char *filename)
 {
 	DWORD numbytes;
-	HANDLE h=CreateFile(filename,GENERIC_READ|GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+	HANDLE h;
+	h=LCSCreateFile(filename, LCSIO_WRITE);
 
 	long dummy;
 
-	if(h!=INVALID_HANDLE_VALUE)
+	if(h!=NULL)
 		{
 		WriteFile(h,&picnum,sizeof(unsigned long),&numbytes,NULL);
 		WriteFile(h,&dimx,sizeof(unsigned long),&numbytes,NULL);
@@ -165,11 +212,12 @@ void CursesMoviest::loadmovie(char *filename)
 	clean();
 
 	DWORD numbytes;
-	HANDLE h=CreateFile(filename,GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+	HANDLE h; 
+	h=LCSCreateFile(filename, LCSIO_READ);
 
 	long dummy;
 
-	if(h!=INVALID_HANDLE_VALUE)
+	if(h!=NULL)
 		{
 		ReadFile(h,&picnum,sizeof(unsigned long),&numbytes,NULL);
 		ReadFile(h,&dimx,sizeof(unsigned long),&numbytes,NULL);
@@ -208,6 +256,7 @@ void CursesMoviest::clean(void)
 
 void CursesMoviest::convertindices_song(filelistst &master)
 {
+int s2;
 	if(songlist.list.size()==0)return;
 
 	vector<int> convert;
@@ -215,7 +264,7 @@ void CursesMoviest::convertindices_song(filelistst &master)
 
 	for(int s=0;s<songlist.list.size();s++)
 		{
-		for(int s2=0;s2<master.list.size();s2++)
+		for(s2=0;s2<master.list.size();s2++)
 			{
 			if(!stricmp(master.list[s2],songlist.list[s]))
 				{
@@ -234,6 +283,7 @@ void CursesMoviest::convertindices_song(filelistst &master)
 
 void CursesMoviest::convertindices_sound(filelistst &master)
 {
+int s2;
 	if(soundlist.list.size()==0)return;
 
 	vector<int> convert;
@@ -241,7 +291,7 @@ void CursesMoviest::convertindices_sound(filelistst &master)
 
 	for(int s=0;s<soundlist.list.size();s++)
 		{
-		for(int s2=0;s2<master.list.size();s2++)
+		for(s2=0;s2<master.list.size();s2++)
 			{
 			if(!stricmp(master.list[s2],soundlist.list[s]))
 				{
@@ -270,7 +320,8 @@ void CursesMoviest::playmovie(int x,int y)
 
 	do
 		{
-		unsigned long time=GetTickCount();
+		//unsigned long time=GetTickCount();
+		alarmset(10);
 
 		cont=0;
 		pted=0;
@@ -318,8 +369,8 @@ void CursesMoviest::playmovie(int x,int y)
 		if(pted)refresh();
 
 		timer++;
-
-		while(time>GetTickCount()-10&&GetTickCount()>=time);
+		//while(time+10>GetTickCount);
+		alarmwait();
 
 		char c=getch();
 		translategetch(c);

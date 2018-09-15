@@ -84,6 +84,14 @@ LINK32=link.exe
 # Name "game - Win32 Debug"
 # Begin Source File
 
+SOURCE=.\compat.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\compat.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\curses.h
 # End Source File
 # Begin Source File
@@ -97,6 +105,14 @@ SOURCE=.\cursesmovie.h
 # Begin Source File
 
 SOURCE=.\game.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\lcsio.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\lcsio.h
 # End Source File
 # Begin Source File
 

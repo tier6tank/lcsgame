@@ -20,15 +20,77 @@
 //    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA			//
 //////////////////////////////////////////////////////////////////////////////////////////
 
-#include <windows.h>
-#include <string.h>
-#include <iostream.h>
-#include <fstream.h>
-#include "vector.h"
-#include "curses.h"
+/* Windows will use original Windows API Code unless GO_PORTABLE is defined
+ * (this will need to be defined in you Makefile/Visual C++ Project), in which
+ * case the portable routines will be used instead. */
+
+  
+#ifdef WIN32
+  #include <windows.h>
+  #include <string.h>
+  //Visual C++ .NET (7) includes the STL with vector, so we
+  //will use that, otherwise the HP STL Vector.h will be used.
+  #if _MSC_VER > 1200
+    #define WIN32_DOTNET
+    #include <iostream>
+    #include <fstream>
+    #include <vector>
+  #else
+    #define WIN32_PRE_DOTNET
+    #include <iostream.h>
+    #include <fstream.h>
+    #include "vector.h"
+  #endif
+  #include "curses.h"
+  //undo PDCurses macros that break vector class
+  #undef erase
+  #undef clear
+  
+  #define HAS_ITOA
+#else
+  #include <vector>
+  #include <string.h>
+  #include <iostream>
+  #include <fstream>
+  #include <ctype.h>
+  #define GO_PORTABLE
+
+  #ifdef XCURSES
+    #define HAVE_PROTO 1
+    #define CPLUSPLUS  1
+    /* Try these PDCurses/Xcurses options later...
+    #define FAST_VIDEO 
+    #define REGISTERWINDOWS
+    */
+    #include <xcurses.h> //This is the X11 Port of PDCurses
+  //undo PDCurses macros that break vector class
+    #undef erase
+    #undef clear
+  #else
+    #ifdef NCURSES
+      #include <ncurses.h>
+    #else     
+      #include <curses.h>
+    #endif  
+  #endif  
+#endif
+
+/* Headers for Portability */
+#ifdef GO_PORTABLE
+  #include <time.h>
+
+  #ifdef Linux // And BSD and SVr4
+    #include <unistd.h>
+    #include <sys/time.h>  
+    #include <signal.h>
+  #endif 
+#endif
+
+
 
 using namespace std;
-
+#include "lcsio.h"
+#include "compat.h"
 #include "cursesmovie.h"
 CursesMoviest movie;
 unsigned char bigletters[27][5][7][4];
@@ -41,6 +103,15 @@ unsigned char newspic[20][78][18][4];
 //#define HIGHFUNDS
 //#define AUTOENLIGHTEN
 //#define SHOWWAIT
+
+//changes
+	//siegetype occurred many times where it shouldn't have in a majornewspaper() if statement
+	//added loitering offense if no other offense exists
+	//fixed the wheelchair bug in assemblesquad()
+
+//&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+//bugs with car chases and the dead
+//bugs with hauling people
 
 #define BIT1 1
 #define BIT2 2
@@ -62,7 +133,7 @@ unsigned char newspic[20][78][18][4];
 unsigned long seed;
 
 unsigned long r_num(void);
-long random(unsigned long max);
+long LCSrandom(unsigned long max);
 
 enum UnlockTypes
 {
@@ -503,6 +574,7 @@ enum SpecialWounds
 #define LAWFLAG2_DISTURBANCE BIT8
 #define LAWFLAG2_HIREILLEGAL BIT9
 #define LAWFLAG2_RACKETEERING BIT10
+#define LAWFLAG2_LOITERING BIT11
 
 enum BusinessFronts
 {
@@ -678,7 +750,7 @@ struct creaturest
 		int attnum=32;
 		while(attnum>0)
 			{
-			a=random(ATTNUM);
+			int a=LCSrandom(ATTNUM);
 			if(att[a]<10)
 				{
 				att[a]++;
@@ -898,6 +970,7 @@ enum VehicleColors
 	VEHICLECOLORNUM
 };
 
+
 struct vehiclest
 {
 	short type;
@@ -924,6 +997,7 @@ enum CarChaseObstacles
 
 siteblockst map[MAPX][MAPY][MAPZ];
 
+//struct chaseseqst
 struct chaseseqst
 {
 	long location;
@@ -931,7 +1005,11 @@ struct chaseseqst
 	vector<vehiclest *> enemycar;
 	char canpullover;
 
-	void clean(void)
+	//public:
+	void clean(void);
+};
+
+	void chaseseqst::clean(void)
 		{
 		for(int v=0;v<enemycar.size();v++)
 			{
@@ -939,9 +1017,10 @@ struct chaseseqst
 			}
 		enemycar.clear();
 
-		friendcar.clear();
+		friendcar.clear(); 
 		}
-};
+
+
 
 chaseseqst chaseseq;
 
@@ -1080,7 +1159,7 @@ short exec[EXECNUM];
 short execterm=1;
 char execname[EXECNUM][80];
 
-unsigned long version=30500;
+unsigned long version=30800;
 unsigned long lowestloadversion=30500;
 unsigned long lowestloadscoreversion=30001;
 
@@ -1503,6 +1582,86 @@ void imprison(creaturest &g);
 void addlocationname(locationst *loc);
 void loadinitfile(void);
 
+/*--------------------------------------------------------------------------
+ * Portability Functions
+ *
+ * Comment by Kevin Sadler 
+ * 
+ * These functions are intended to replace explicit calls to Windows API.
+ *
+ * We can do the following:
+ *
+ * (a) Write alternative calls for the ports, keep Windows calls.
+ * (b) Write portable alternatives for use by Windows and ports.
+ * (c) Do (a) and (b) and decide what Windows does (API or portable)
+ *     based on the value of a MACRO GO_PORTABLE.
+ * 
+ *
+ *--------------------------------------------------------------------------*/
+ 
+ unsigned long getSeed(void)
+ {
+ unsigned long t;
+ 
+ #ifdef GO_PORTABLE
+ 
+ t = (unsigned long)time(NULL); /* Seconds since 1970-01-01 00:00:00 */
+ 
+ #else // WIN32
+ 
+ t = (unsigned long)GetTickCount(); /* ms since system boot */
+ 
+ #endif
+
+ return(t);
+ }
+ 
+ 
+ #ifndef HAS_ITOA
+ // Portable equivalent of Windows itoa() function.
+ // Note the radix parameter is expected to be 10.
+ // The function is not fully ported and doesn't support
+ //other bases, it's just enough for this program to be
+ //ported.
+ // Ensure buffer is of sufficient size.
+ char *itoa(int value, char *buffer, int radix)
+ {
+ if (radix != 10)
+   {
+    // Error - base other than 10 not supported.
+    cerr << "Error: itoa() - Ported function does not support bases other than 10." << endl;
+    exit(1); 
+   }
+   else if (buffer != NULL)
+   {
+   sprintf(buffer, "%d", value);
+   }
+   return buffer;
+ }
+ #endif
+
+ 
+ 
+ /* raw_output() is provided in PDcurses/Xcurses but is not in ncurses.
+  * This function is for compatibility and is currently a do nothing function.
+  */
+ #ifdef NCURSES
+ inline int raw_output(bool bf)
+ {
+ return OK;
+ }
+ 
+ #endif
+  
+/*--------------------------------------------------------------------------
+ * End of Portability Functions
+ *--------------------------------------------------------------------------*/
+  
+
+
+
+
+
 int main(int argc, char* argv[])
 {
 	//start curses
@@ -1511,7 +1670,7 @@ int main(int argc, char* argv[])
 	//initialize curses color
 	start_color();
 
-	seed=GetTickCount();
+	seed=getSeed();
 	
 	//initialize the array of color pairs
 	for(int i=0;i<8;i++)
@@ -1533,6 +1692,7 @@ int main(int argc, char* argv[])
 
 	//begin the game loop
 	keypad(stdscr,TRUE);
+	
 	raw_output(TRUE);
 
 	loadgraphics();
@@ -1601,7 +1761,7 @@ int main(int argc, char* argv[])
 		name(execname[e]);
 		}
 
-	attorneyseed=GetTickCount();
+	attorneyseed=getSeed();
 	cityname(lcityname);
 
 	loaded=load();
@@ -1636,7 +1796,7 @@ void set_color(short f,short b,char bright)
 }
 
 //picks a random number from 0 to max-1
-long random(unsigned long max)
+long LCSrandom(unsigned long max)
 {
 	r_num();
 
@@ -1773,7 +1933,7 @@ void mode_title(void)
 		}
 
 	set_color(COLOR_WHITE,COLOR_BLACK,1);
-	strcpy(str,"v3.06 Copyright (C) 2002-4, Tarn Adams");
+	strcpy(str,"v3.08 Copyright (C) 2002-4, Tarn Adams");
 	move(13,39-((strlen(str)-1)>>1));
 	addstr(str);
 	strcpy(str,"A Bay 12 Games Production");
@@ -1830,6 +1990,10 @@ void mode_base(void)
 	#ifdef SHOWWAIT
 		int oldforcemonth=month;
 	#endif
+	
+	int length=0;
+
+	long l = 0;
 
 	do
 		{
@@ -1982,7 +2146,7 @@ void mode_base(void)
 			}
 
 		long safenumber=0;
-		for(long l=0;l<location.size();l++)
+		for(l=0;l<location.size();l++)
 			{
 			if(location[l]->renting>=0)safenumber++;
 			}
@@ -2188,10 +2352,10 @@ void mode_base(void)
 				addstr("P - PATRIOTISM: fly a flag here ($20)");
 				}
 
-			l=strlen(slogan);
+			length=strlen(slogan);
 			set_color(COLOR_WHITE,COLOR_BLACK,1);
-			if(haveflag)move(24,40-(l>>1));
-			else move(20,40-(l>>1));
+			if(haveflag)move(24,40-(length>>1));
+			else move(20,40-(length>>1));
 			addstr(slogan);
 
 			refresh();
@@ -2392,7 +2556,7 @@ void initliberal(creaturest &cr)
 
 	while(startsknum>0)
 		{
-		cr.skill[random(SKILLNUM)]++;
+		cr.skill[LCSrandom(SKILLNUM)]++;
 		startsknum--;
 		}
 }
@@ -2457,7 +2621,8 @@ void printliberalstats(creaturest &cr,char smll)
 		{
 		printed=0;
 
-		unsigned long max=0,maxs=-1;
+		unsigned long max=0;
+		long maxs=-1;
 		for(int s=0;s<SKILLNUM;s++)
 			{
 			if(cr.skill[s]>max && !used[s])
@@ -2556,7 +2721,7 @@ void printliberalstats(creaturest &cr,char smll)
 
 		if(woundsum>0)
 			{
-			for(w=0;w<BODYPARTNUM;w++)
+			for(int w=0;w<BODYPARTNUM;w++)
 				{
 				if(cr.wound[w] & WOUND_BLEEDING)set_color(COLOR_RED,COLOR_BLACK,1);
 				else set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -2823,6 +2988,7 @@ void review(void)
 void assemblesquad(squadst *cursquad)
 {
 	long culloc=-1;
+	int p;
 	if(cursquad!=NULL)
 		{
 		culloc=cursquad->squad[0]->location;
@@ -2838,7 +3004,7 @@ void assemblesquad(squadst *cursquad)
 		}
 
 	vector<creaturest *> temppool;
-	for(int p=0;p<pool.size();p++)
+	for(p=0;p<pool.size();p++)
 		{
 		if(pool[p]->alive==1&&
 			pool[p]->align==1&&
@@ -2878,7 +3044,7 @@ void assemblesquad(squadst *cursquad)
 	do
 		{
 		squadsize=0;
-		for(int p=0;p<6;p++)if(cursquad->squad[p]!=NULL)squadsize++;
+		for(p=0;p<6;p++)if(cursquad->squad[p]!=NULL)squadsize++;
 
 		erase();
 
@@ -3012,7 +3178,7 @@ void assemblesquad(squadst *cursquad)
 						}
 					}
 				if(!temppool[p]->canwalk()&&
-					(temppool[p]->flag & CREATUREFLAG_WHEELCHAIR))
+					!(temppool[p]->flag & CREATUREFLAG_WHEELCHAIR))
 					{
 					set_color(COLOR_RED,COLOR_BLACK,1);
 					move(22,0);
@@ -3064,7 +3230,7 @@ void assemblesquad(squadst *cursquad)
 			char good=1;
 			char care=0;
 
-			for(p=0;p<6;p++)
+			for(int p=0;p<6;p++)
 				{
 				if(cursquad->squad[p]!=NULL)
 					{
@@ -3095,7 +3261,7 @@ void assemblesquad(squadst *cursquad)
 			}
 		if(c=='9')
 			{
-			for(p=0;p<6;p++)
+			for(int p=0;p<6;p++)
 				{
 				if(cursquad->squad[p]!=NULL)
 					{
@@ -3149,7 +3315,7 @@ void assemblesquad(squadst *cursquad)
 		{
 		hasmembers=0;
 
-		for(p=0;p<6;p++)
+		for(int p=0;p<6;p++)
 			{
 			if(squad[sq]->squad[p]!=NULL)
 				{
@@ -3171,7 +3337,7 @@ void assemblesquad(squadst *cursquad)
 
 			if(activesquad==squad[sq])activesquad=NULL;
 			delete squad[sq];
-			squad.verase(sq);
+			squad.erase(squad.begin() + sq);
 			}
 		}
 }
@@ -3221,6 +3387,8 @@ void orderparty(void)
 
 void initsite(locationst &loc)
 {
+ int x = 0;
+ 
 	//PREP
 	if(activesquad==NULL)return;
 
@@ -3244,8 +3412,8 @@ void initsite(locationst &loc)
 	//MAKE MAP
 	unsigned long oldseed=seed;
 	seed=loc.mapseed;
-
-	for(int x=0;x<MAPX;x++)
+	
+	for(x=0;x<MAPX;x++)
 		{
 		for(int y=0;y<MAPY;y++)
 			{
@@ -3274,7 +3442,7 @@ void initsite(locationst &loc)
 		{
 		map[MAPX>>1][1][0].special=SPECIAL_APARTMENT_SIGN;
 		short height;
-		int floors=random(6)+1;
+		int floors=LCSrandom(6)+1;
 		int swap;
 		for(int z=0;z<floors;z++)
 			{
@@ -3283,11 +3451,11 @@ void initsite(locationst &loc)
 				map[MAPX>>1][y][z].flag=0;
 				if(y%4==0)
 					{
-					height=y+random(3)-1;
+					height=y+LCSrandom(3)-1;
 					map[(MAPX>>1)-1][height][z].flag=SITEBLOCK_DOOR;
 					generateroom((MAPX>>1)-8,y-1,7,3,z);
 
-					height=y+random(3)-1;
+					height=y+LCSrandom(3)-1;
 					map[(MAPX>>1)+1][height][z].flag=SITEBLOCK_DOOR;
 					generateroom((MAPX>>1)+2,y-1,7,3,z);
 					if(y==4&&z==0)
@@ -3347,8 +3515,8 @@ void initsite(locationst &loc)
 				}
 			case SITE_BUSINESS_CRACKHOUSE:
 				{
-				int dx=random(5)*2+19;
-				int dy=random(3)*2+7;
+				int dx=LCSrandom(5)*2+19;
+				int dy=LCSrandom(3)*2+7;
 				int rx=(MAPX>>1)-(dx>>1);
 				int ry=3;
 				generateroom(rx,ry,dx,dy,0);
@@ -3356,8 +3524,8 @@ void initsite(locationst &loc)
 				}
 			default:
 				{
-				int dx=random(5)*2+35;
-				int dy=random(3)*2+15;
+				int dx=LCSrandom(5)*2+35;
+				int dy=LCSrandom(3)*2+15;
 				int rx=(MAPX>>1)-(dx>>1);
 				int ry=3;
 				generateroom(rx,ry,dx,dy,0);
@@ -3478,7 +3646,7 @@ void initsite(locationst &loc)
 		{
 		acted=0;
 
-		for(x=2;x<MAPX-2;x++)
+		for(int x=2;x<MAPX-2;x++)
 			{
 			for(int y=2;y<MAPY-2;y++)
 				{
@@ -3508,7 +3676,7 @@ void initsite(locationst &loc)
 			{
 			for(int z=0;z<MAPZ;z++)
 				{
-				if(map[x][y][z].flag==0&&!random(10))
+				if(map[x][y][z].flag==0&&!LCSrandom(10))
 					{
 					switch(loc.type)
 						{
@@ -3527,19 +3695,19 @@ void initsite(locationst &loc)
 						}
 					}
 
-				if(map[x][y][z].flag==0&&loc.type==SITE_LABORATORY_COSMETICS&&!random(10))
+				if(map[x][y][z].flag==0&&loc.type==SITE_LABORATORY_COSMETICS&&!LCSrandom(10))
 					{
 					map[x][y][z].special=SPECIAL_LAB_COSMETICS_CAGEDANIMALS;
 					}
-				if(map[x][y][z].flag==0&&loc.type==SITE_LABORATORY_GENETIC&&!random(10))
+				if(map[x][y][z].flag==0&&loc.type==SITE_LABORATORY_GENETIC&&!LCSrandom(10))
 					{
 					map[x][y][z].special=SPECIAL_LAB_GENETIC_CAGEDANIMALS;
 					}
-				if(map[x][y][z].flag==0&&loc.type==SITE_INDUSTRY_SWEATSHOP&&!random(10))
+				if(map[x][y][z].flag==0&&loc.type==SITE_INDUSTRY_SWEATSHOP&&!LCSrandom(10))
 					{
 					map[x][y][z].special=SPECIAL_SWEATSHOP_EQUIPMENT;
 					}
-				if(map[x][y][z].flag==0&&loc.type==SITE_INDUSTRY_POLLUTER&&!random(10))
+				if(map[x][y][z].flag==0&&loc.type==SITE_INDUSTRY_POLLUTER&&!LCSrandom(10))
 					{
 					map[x][y][z].special=SPECIAL_POLLUTER_EQUIPMENT;
 					}
@@ -3548,12 +3716,12 @@ void initsite(locationst &loc)
 					loc.type==SITE_BUSINESS_CIGARBAR||
 					loc.type==SITE_BUSINESS_LATTESTAND||
 					loc.type==SITE_BUSINESS_INTERNETCAFE)&&
-					!random(10))
+					!LCSrandom(10))
 					{
 					map[x][y][z].special=SPECIAL_RESTAURANT_TABLE;
 					}
 				if(map[x][y][z].flag==0&&loc.type==SITE_BUSINESS_INTERNETCAFE&&
-					!random(10))
+					!LCSrandom(10))
 					{
 					map[x][y][z].special=SPECIAL_CAFE_COMPUTER;
 					}
@@ -3568,10 +3736,10 @@ void initsite(locationst &loc)
 
 	do
 		{
-		freex=random(MAPX-4)+2;
-		freey=random(MAPY-4)+2;
+		freex=LCSrandom(MAPX-4)+2;
+		freey=LCSrandom(MAPY-4)+2;
 		if(freex>=(MAPX>>1)-2&&
-			freex<=(MAPX>>1)+2)freey=random(MAPY-6)+4;
+			freex<=(MAPX>>1)+2)freey=LCSrandom(MAPY-6)+4;
 		count--;
 		}while((map[freex][freey][freez].flag!=0 ||
 			map[freex][freey][freez].special!=-1)&&count>0);
@@ -3612,10 +3780,10 @@ void initsite(locationst &loc)
 	//ADD SECOND SPECIAL
 	do
 		{
-		freex=random(MAPX-4)+2;
-		freey=random(MAPY-4)+2;
+		freex=LCSrandom(MAPX-4)+2;
+		freey=LCSrandom(MAPY-4)+2;
 		if(freex>=(MAPX>>1)-2&&
-			freex<=(MAPX>>1)+2)freey=random(MAPY-6)+4;
+			freex<=(MAPX>>1)+2)freey=LCSrandom(MAPY-6)+4;
 		count--;
 		}while((map[freex][freey][freez].flag!=0 ||
 			map[freex][freey][freez].special!=-1)&&count>0);
@@ -3638,19 +3806,19 @@ void generateroom(int rx,int ry,int dx,int dy,int z)
 			}
 		}
 
-	if((dx<=3||dy<=3)&&!random(2))return;
+	if((dx<=3||dy<=3)&&!LCSrandom(2))return;
 
 	if(dx<=2&&dy<=2)return;
 
 	//LAY DOWN WALL AND ITERATE
-	if((!random(2)||dy<=2)&&dx>2)
+	if((!LCSrandom(2)||dy<=2)&&dx>2)
 		{
-		int wx=rx+random(dx-2)+1;
+		int wx=rx+LCSrandom(dx-2)+1;
 
 		for(int wy=0;wy<dy;wy++)map[wx][ry+wy][z].flag=SITEBLOCK_BLOCK;
-		int rny=random(dy);
+		int rny=LCSrandom(dy);
 		map[wx][ry+rny][z].flag=SITEBLOCK_DOOR;
-		if(!random(3))map[wx][ry+rny][z].flag|=SITEBLOCK_LOCKED;
+		if(!LCSrandom(3))map[wx][ry+rny][z].flag|=SITEBLOCK_LOCKED;
 
 		generateroom(rx,ry,wx-rx,dy,z);
 
@@ -3658,12 +3826,12 @@ void generateroom(int rx,int ry,int dx,int dy,int z)
 		}
 	else
 		{
-		int wy=ry+random(dy-2)+1;
+		int wy=ry+LCSrandom(dy-2)+1;
 
 		for(int wx=0;wx<dx;wx++)map[rx+wx][wy][z].flag=SITEBLOCK_BLOCK;
-		int rnx=random(dx);
+		int rnx=LCSrandom(dx);
 		map[rx+rnx][wy][z].flag=SITEBLOCK_DOOR;
-		if(!random(3))map[rx+rnx][wy][z].flag|=SITEBLOCK_LOCKED;
+		if(!LCSrandom(3))map[rx+rnx][wy][z].flag|=SITEBLOCK_LOCKED;
 
 		generateroom(rx,ry,dx,wy-ry,z);
 
@@ -3716,8 +3884,8 @@ void mode_site(long loc)
 
 		do
 			{
-			locx=random(MAPX);
-			locy=maxy-random(3);
+			locx=LCSrandom(MAPX);
+			locy=maxy-LCSrandom(3);
 			if(locy<3)locy=3;
 			locz=0;
 			}while(map[locx][locy][locz].flag & (SITEBLOCK_BLOCK|SITEBLOCK_DOOR));
@@ -3731,8 +3899,8 @@ void mode_site(long loc)
 			{
 			do
 				{
-				lx=random(MAPX);
-				ly=random(MAPY);
+				lx=LCSrandom(MAPX);
+				ly=LCSrandom(MAPY);
 				lz=0;
 				}while(map[lx][ly][lz].flag & (SITEBLOCK_BLOCK|SITEBLOCK_DOOR|SITEBLOCK_EXIT));
 			map[lx][ly][lz].flag|=SITEBLOCK_LOOT;
@@ -3746,8 +3914,8 @@ void mode_site(long loc)
 				{
 				do
 					{
-					lx=random(MAPX);
-					ly=random(MAPY);
+					lx=LCSrandom(MAPX);
+					ly=LCSrandom(MAPY);
 					lz=0;
 					}while(map[lx][ly][lz].flag & (SITEBLOCK_BLOCK|SITEBLOCK_DOOR|SITEBLOCK_EXIT|SITEBLOCK_LOOT));
 				map[lx][ly][lz].siegeflag|=SIEGEFLAG_TRAP;
@@ -3761,8 +3929,8 @@ void mode_site(long loc)
 			{
 			do
 				{
-				lx=random(11)+(MAPX/2)-5;
-				ly=random(8);
+				lx=LCSrandom(11)+(MAPX/2)-5;
+				ly=LCSrandom(8);
 				lz=0;
 				count--;
 				if(count==0)break;
@@ -3781,8 +3949,8 @@ void mode_site(long loc)
 				{
 				do
 					{
-					lx=random(11)+(MAPX/2)-5;
-					ly=random(8);
+					lx=LCSrandom(11)+(MAPX/2)-5;
+					ly=LCSrandom(8);
 					lz=0;
 					count--;
 					if(count==0)break;
@@ -3798,6 +3966,7 @@ void mode_site(long loc)
 
 void mode_site(void)
 {
+	int p, x, u;
 	if(activesquad==NULL)return;
 
 	reloadparty();
@@ -3815,7 +3984,7 @@ void mode_site(void)
 		{
 		int partysize=0;
 		int partyalive=0;
-		for(int p=0;p<6;p++)
+		for(p=0;p<6;p++)
 			{
 			if(activesquad->squad[p]!=NULL)partysize++;
 			else continue;
@@ -4033,7 +4202,7 @@ void mode_site(void)
 						if(v!=-1)
 							{
 							delete vehicle[v];
-							vehicle.verase(v);
+							vehicle.erase(vehicle.begin() + v);
 							}
 						}
 					}
@@ -4048,7 +4217,7 @@ void mode_site(void)
 					if(pool[pl]==activesquad->squad[p])
 						{
 						delete pool[pl];
-						pool.verase(pl);
+						pool.erase(pool.begin() + pl);
 						break;
 						}
 					}
@@ -4532,7 +4701,7 @@ void mode_site(void)
 
 					if(freed)
 						{
-						int time=20+random(10);
+						int time=20+LCSrandom(10);
 						if(time<1)time=1;
 						if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 						}
@@ -4628,17 +4797,17 @@ void mode_site(void)
 
 						while(lplus>0)
 							{
-							b=random(location[cursite]->loot.size());
+							b=LCSrandom(location[cursite]->loot.size());
 							it=location[cursite]->loot[b];
 							activesquad->loot.push_back(it);
-							location[cursite]->loot.verase(b);
+							location[cursite]->loot.erase(location[cursite]->loot.begin() + b);
 
 							lplus--;
 							}
 						}
 					else
 						{
-						int time=20+random(10);
+						int time=20+LCSrandom(10);
 						if(time<1)time=1;
 						if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -4654,10 +4823,10 @@ void mode_site(void)
 							case SITE_RESIDENTIAL_APARTMENT:
 							case SITE_RESIDENTIAL_APARTMENT_UPSCALE:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(5))item->loottype=LOOT_CELLPHONE;
-									else if(!random(4))item->loottype=LOOT_SILVERWARE;
-									else if(!random(3))item->loottype=LOOT_PRINTER;
-									else if(!random(2))item->loottype=LOOT_TV;
+									if(!LCSrandom(5))item->loottype=LOOT_CELLPHONE;
+									else if(!LCSrandom(4))item->loottype=LOOT_SILVERWARE;
+									else if(!LCSrandom(3))item->loottype=LOOT_PRINTER;
+									else if(!LCSrandom(2))item->loottype=LOOT_TV;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
@@ -4665,39 +4834,40 @@ void mode_site(void)
 							case SITE_INDUSTRY_NUCLEAR:
 							case SITE_LABORATORY_GENETIC:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(2))item->loottype=LOOT_LABEQUIPMENT;
-									else if(!random(2))item->loottype=LOOT_TV;
-									else if(!random(5))item->loottype=LOOT_SCANNER;
-									else if(!random(3))item->loottype=LOOT_PRINTER;
-									else if(!random(5))item->loottype=LOOT_CHEMICAL;
+									if(!LCSrandom(2))item->loottype=LOOT_LABEQUIPMENT;
+									else if(!LCSrandom(2))item->loottype=LOOT_TV;
+									else if(!LCSrandom(5))item->loottype=LOOT_SCANNER;
+									else if(!LCSrandom(3))item->loottype=LOOT_PRINTER;
+									else if(!LCSrandom(5))item->loottype=LOOT_CHEMICAL;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_GOVERNMENT_POLICESTATION:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(40))item->loottype=LOOT_POLICERECORDS;
-									else if(!random(3))item->loottype=LOOT_TV;
-									else if(!random(2))item->loottype=LOOT_PRINTER;
+									if(!LCSrandom(40))item->loottype=LOOT_POLICERECORDS;
+									else if(!LCSrandom(3))item->loottype=LOOT_TV;
+									else if(!LCSrandom(2))item->loottype=LOOT_PRINTER;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_GOVERNMENT_COURTHOUSE:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(30))item->loottype=LOOT_POLICERECORDS;
-									else if(!random(2))item->loottype=LOOT_TV;
+									if(!LCSrandom(30))item->loottype=LOOT_POLICERECORDS;
+									else if(!LCSrandom(2))item->loottype=LOOT_TV;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_GOVERNMENT_PRISON:
 								item=new itemst;item->type=ITEM_WEAPON;
-									item->weapon.type=WEAPON_SHANK;
+								item->weapon.type=WEAPON_SHANK;
+								item->weapon.ammo=0;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_GOVERNMENT_INTELLIGENCEHQ:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(3))item->loottype=LOOT_CELLPHONE;
-									else if(!random(2))item->loottype=LOOT_TV;
-									else if(random(199))item->loottype=LOOT_COMPUTER;
+									if(!LCSrandom(3))item->loottype=LOOT_CELLPHONE;
+									else if(!LCSrandom(2))item->loottype=LOOT_TV;
+									else if(LCSrandom(199))item->loottype=LOOT_COMPUTER;
 									else item->loottype=LOOT_SECRETDOCUMENTS;
 								activesquad->loot.push_back(item);
 								break;
@@ -4708,44 +4878,44 @@ void mode_site(void)
 								break;
 							case SITE_INDUSTRY_POLLUTER:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(4))item->loottype=LOOT_PRINTER;
-									else if(!random(3))item->loottype=LOOT_TV;
-									else if(!random(2))item->loottype=LOOT_CHEMICAL;
+									if(!LCSrandom(4))item->loottype=LOOT_PRINTER;
+									else if(!LCSrandom(3))item->loottype=LOOT_TV;
+									else if(!LCSrandom(2))item->loottype=LOOT_CHEMICAL;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_CORPORATE_HEADQUARTERS:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(4))item->loottype=LOOT_PRINTER;
-									else if(!random(3))item->loottype=LOOT_TV;
-									else if(!random(2))item->loottype=LOOT_CELLPHONE;
+									if(!LCSrandom(4))item->loottype=LOOT_PRINTER;
+									else if(!LCSrandom(3))item->loottype=LOOT_TV;
+									else if(!LCSrandom(2))item->loottype=LOOT_CELLPHONE;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_CORPORATE_HOUSE:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(5))item->loottype=LOOT_CELLPHONE;
-									else if(!random(4))item->loottype=LOOT_SILVERWARE;
-									else if(!random(3))item->loottype=LOOT_PRINTER;
-									else if(!random(2))item->loottype=LOOT_TV;
+									if(!LCSrandom(5))item->loottype=LOOT_CELLPHONE;
+									else if(!LCSrandom(4))item->loottype=LOOT_SILVERWARE;
+									else if(!LCSrandom(3))item->loottype=LOOT_PRINTER;
+									else if(!LCSrandom(2))item->loottype=LOOT_TV;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_MEDIA_AMRADIO:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(5))item->loottype=LOOT_CELLPHONE;
-									else if(!random(4))item->loottype=LOOT_BROADCASTINGEQUIPMENT;
-									else if(!random(3))item->loottype=LOOT_PRINTER;
-									else if(!random(2))item->loottype=LOOT_TV;
+									if(!LCSrandom(5))item->loottype=LOOT_CELLPHONE;
+									else if(!LCSrandom(4))item->loottype=LOOT_BROADCASTINGEQUIPMENT;
+									else if(!LCSrandom(3))item->loottype=LOOT_PRINTER;
+									else if(!LCSrandom(2))item->loottype=LOOT_TV;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
 							case SITE_MEDIA_CABLENEWS:
 								item=new itemst;item->type=ITEM_LOOT;
-									if(!random(5))item->loottype=LOOT_CELLPHONE;
-									else if(!random(4))item->loottype=LOOT_TVCAMERA;
-									else if(!random(3))item->loottype=LOOT_PRINTER;
-									else if(!random(2))item->loottype=LOOT_TV;
+									if(!LCSrandom(5))item->loottype=LOOT_CELLPHONE;
+									else if(!LCSrandom(4))item->loottype=LOOT_TVCAMERA;
+									else if(!LCSrandom(3))item->loottype=LOOT_PRINTER;
+									else if(!LCSrandom(2))item->loottype=LOOT_TV;
 									else item->loottype=LOOT_COMPUTER;
 								activesquad->loot.push_back(item);
 								break;
@@ -4828,16 +4998,16 @@ void mode_site(void)
 					chaseseq.location=cursite;
 					long level=sitecrime;
 					if(sitealarm==0)level=0;
-					if(random(3)&&level<4)level=0;
-					if(random(2)&&level<8)level=0;
-					if(postalarmtimer<10+random(20))level=0;
-					else if(postalarmtimer<20+random(20)&&random(3))level=0;
-					else if(postalarmtimer<40+random(20)&&!random(3))level=0;
+					if(LCSrandom(3)&&level<4)level=0;
+					if(LCSrandom(2)&&level<8)level=0;
+					if(postalarmtimer<10+LCSrandom(20))level=0;
+					else if(postalarmtimer<20+LCSrandom(20)&&LCSrandom(3))level=0;
+					else if(postalarmtimer<40+LCSrandom(20)&&!LCSrandom(3))level=0;
 					if(location[cursite]->siege.siege)level=1000;
 
 					//MAKE SURE YOU ARE GUILTY OF SOMETHING
 					char guilty=0;
-					for(int p=0;p<6;p++)
+					for(p=0;p<6;p++)
 						{
 						if(activesquad->squad[p]!=NULL)
 							{
@@ -4872,7 +5042,7 @@ void mode_site(void)
 					if(gotout)
 						{
 						//DEAL WITH PRISONERS AND STOP BLEEDING
-						for(int p=0;p<6;p++)
+						for(p=0;p<6;p++)
 							{
 							if(activesquad->squad[p]==NULL)continue;
 							if(activesquad->squad[p]->prisoner!=NULL)
@@ -4948,7 +5118,7 @@ void mode_site(void)
 				//SEE IF THERE IS AN ENCOUNTER
 				char newenc=0;
 
-				if(!location[cursite]->siege.siege&&!random(10))newenc=1;
+				if(!location[cursite]->siege.siege&&!LCSrandom(10))newenc=1;
 
 				for(int e=0;e<ENCMAX;e++)
 					{
@@ -5038,7 +5208,7 @@ void mode_site(void)
 								if(bash(BASH_DOOR,actual))
 									{
 									map[locx][locy][locz].flag&=~SITEBLOCK_DOOR;
-									int time=20+random(10);
+									int time=20+LCSrandom(10);
 									if(time<1)time=1;
 									if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 									sitecrime++;
@@ -5082,7 +5252,7 @@ void mode_site(void)
 					vector<int> unity;
 					vector<int> unitz;
 
-					for(int x=0;x<MAPX;x++)
+					for(x=0;x<MAPX;x++)
 						{
 						for(int y=0;y<MAPY;y++)
 							{
@@ -5099,10 +5269,10 @@ void mode_site(void)
 						}
 
 					int sx,sy,sz;
-					for(int u=0;u<unitx.size();u++)
+					for(u=0;u<unitx.size();u++)
 						{
 						sz=0;
-						switch(random(4))
+						switch(LCSrandom(4))
 							{
 							case 0:sx=-1;sy=0;
 								break;
@@ -5180,7 +5350,7 @@ void mode_site(void)
 					for(u=0;u<unitx.size();u++)
 						{
 						sz=0;
-						switch(random(4))
+						switch(LCSrandom(4))
 							{
 							case 0:sx=-1;sy=0;
 								break;
@@ -5245,7 +5415,7 @@ void mode_site(void)
 					for(u=0;u<unitx.size();u++)
 						{
 						sz=0;
-						switch(random(4))
+						switch(LCSrandom(4))
 							{
 							case 0:sx=-1;sy=0;
 								break;
@@ -5293,7 +5463,7 @@ void mode_site(void)
 								//MORE WAVES WILL ATTACK
 									//AND IT GETS WORSE AND WORSE
 					location[cursite]->siege.attacktime++;
-					if(location[cursite]->siege.attacktime>=100+random(10)&&
+					if(location[cursite]->siege.attacktime>=100+LCSrandom(10)&&
 						(locz!=0||locx<(MAPX/2-3)||locx>(MAPX/2+3)||
 						locy>5))
 						{
@@ -5307,8 +5477,8 @@ void mode_site(void)
 							{
 							do
 								{
-								lx=random(7)+(MAPX/2)-3;
-								ly=random(5);
+								lx=LCSrandom(7)+(MAPX/2)-3;
+								ly=LCSrandom(5);
 								lz=0;
 								count--;
 								if(count==0)break;
@@ -5327,8 +5497,8 @@ void mode_site(void)
 								{
 								do
 									{
-									lx=random(7)+(MAPX/2)-3;
-									ly=random(5);
+									lx=LCSrandom(7)+(MAPX/2)-3;
+									ly=LCSrandom(5);
 									lz=0;
 									count--;
 									if(count==0)break;
@@ -5370,7 +5540,7 @@ void mode_site(void)
 						else sitestory->type=NEWSSTORY_SQUAD_BROKESIEGE;
 
 						//DEAL WITH PRISONERS AND STOP BLEEDING
-						for(int p=0;p<6;p++)
+						for(p=0;p<6;p++)
 							{
 							if(activesquad->squad[p]==NULL)continue;
 							if(activesquad->squad[p]->prisoner!=NULL)
@@ -5905,12 +6075,14 @@ void burnflag(void)
 {
 	int flagparts=112;
 	short flag[16][7][4];
+	int x;
+	int y;
 
 	for(int p=0;p<7;p++)
 		{
 		if(p<3)
 			{
-			for(int x=0;x<6;x++)
+			for(x=0;x<6;x++)
 				{
 				flag[x][p][0]=':';
 				flag[x][p][1]=COLOR_WHITE;
@@ -5928,7 +6100,7 @@ void burnflag(void)
 			}
 		else
 			{
-			for(int x=0;x<16;x++)
+			for(x=0;x<16;x++)
 				{
 				if(p<6)
 					{
@@ -5948,8 +6120,8 @@ void burnflag(void)
 			}
 		}
 
-	int x=random(16);
-	int y=random(7);
+	x=LCSrandom(16);
+	y=LCSrandom(7);
 	flag[x][y][0]=178;
 	flag[x][y][1]=COLOR_YELLOW;
 	flag[x][y][2]=COLOR_BLACK;
@@ -5961,9 +6133,9 @@ void burnflag(void)
 		{
 		if(!first)
 			{
-			for(int x=0;x<16;x++)
+			for(x=0;x<16;x++)
 				{
-				for(int y=0;y<7;y++)
+				for(y=0;y<7;y++)
 					{
 					if(flag[x][y][0]==179)flag[x][y][0]--;
 					else if(flag[x][y][0]==178)
@@ -5993,9 +6165,9 @@ void burnflag(void)
 			}
 		else first=0;
 
-		for(int x=0;x<16;x++)
+		for(x=0;x<16;x++)
 			{
-			for(int y=0;y<7;y++)
+			for(y=0;y<7;y++)
 				{
 				move(y+17,x+32);
 				set_color(flag[x][y][1],flag[x][y][2],flag[x][y][3]);
@@ -6004,14 +6176,13 @@ void burnflag(void)
 			}
 		refresh();
 
-		unsigned long time=GetTickCount();
-		while(time+10>GetTickCount()&&time<=GetTickCount());
+		pause_ms(10);
 
 		char gotnew=0;
 		while(!gotnew&&flagparts>3)
 			{
-			x=random(16);
-			int y=random(7);
+			x=LCSrandom(16);
+			y=LCSrandom(7);
 			char conf=0;
 			if(flag[x][y][0]==':'||flag[x][y][0]==223||flag[x][y][0]==220)
 				{
@@ -6074,10 +6245,13 @@ void getslogan(void)
 
 void stopevil(void)
 {
+ int l = 0;
+ int p = 0;
+ 
 	if(activesquad==NULL)return;
 
 	char havecar=0;
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)
 			{
@@ -6093,7 +6267,7 @@ void stopevil(void)
 	long loc=-1;
 
 	vector<long> temploc;
-	for(int l=0;l<location.size();l++)
+	for(l=0;l<location.size();l++)
 		{
 		if(location[l]->parent==loc&&location[l]->renting>=0)temploc.push_back(l);
 		}
@@ -6120,7 +6294,7 @@ void stopevil(void)
 			}
 
 		int y=10;
-		for(int p=page*11;p<temploc.size()&&p<page*11+11;p++)
+		for(p=page*11;p<temploc.size()&&p<page*11+11;p++)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(y,0);
@@ -6213,7 +6387,7 @@ void stopevil(void)
 				loc=temploc[sq];
 				temploc.clear();
 
-				for(int l=0;l<location.size();l++)
+				for(l=0;l<location.size();l++)
 					{
 					if(location[l]->parent==loc&&location[l]->renting>=0)temploc.push_back(l);
 					}
@@ -6251,7 +6425,7 @@ void stopevil(void)
 			{
 			loc=location[loc]->parent;
 			temploc.clear();
-			for(int l=0;l<location.size();l++)
+			for(l=0;l<location.size();l++)
 				{
 				if(location[l]->parent==loc&&location[l]->renting>=0)temploc.push_back(l);
 				}
@@ -6773,7 +6947,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_SCULPTOR]=1;
 			creaturearray[CREATURE_THIEF]=3;
 			creaturearray[CREATURE_ACTOR]=1;
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -6817,7 +6991,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_YOGAINSTRUCTOR]=1;
 			creaturearray[CREATURE_ATHLETE]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -6856,7 +7030,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_ACTOR]=1;
 			creaturearray[CREATURE_ATHLETE]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -6940,7 +7114,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_YOGAINSTRUCTOR]=1;
 			creaturearray[CREATURE_ATHLETE]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -6973,7 +7147,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_PHOTOGRAPHER]=1;
 			creaturearray[CREATURE_YOGAINSTRUCTOR]=2;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7003,7 +7177,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_CAMERAMAN]=1;
 			creaturearray[CREATURE_CLERK]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7034,7 +7208,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_THIEF]=1;
 			creaturearray[CREATURE_ACTOR]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7089,7 +7263,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_THIEF]=1;
 			creaturearray[CREATURE_ACTOR]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7152,7 +7326,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_YOGAINSTRUCTOR]=1;
 			creaturearray[CREATURE_ATHLETE]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7190,7 +7364,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_ACTOR]=1;
 			creaturearray[CREATURE_ATHLETE]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7208,7 +7382,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_WORKER_SECRETARY]=10;
 			creaturearray[CREATURE_OFFICEWORKER]=10;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7226,7 +7400,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_WORKER_SECRETARY]=10;
 			creaturearray[CREATURE_OFFICEWORKER]=10;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7244,7 +7418,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_WORKER_SECRETARY]=1000;
 			creaturearray[CREATURE_OFFICEWORKER]=1000;
 			creaturearray[CREATURE_GENETIC]=1;
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7327,7 +7501,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_YOGAINSTRUCTOR]=1;
 			creaturearray[CREATURE_ATHLETE]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7413,7 +7587,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_YOGAINSTRUCTOR]=1;
 			creaturearray[CREATURE_ATHLETE]=1;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7435,7 +7609,7 @@ void prepareencounter(short type,char sec)
 				   law[LAW_POLICEBEHAVIOR]==-2)creaturearray[CREATURE_EDUCATOR]=2;
 				else creaturearray[CREATURE_PRISONGUARD]=2;
 				}
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7453,7 +7627,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_MATHEMATICIAN]=5;
 			creaturearray[CREATURE_PROGRAMMER]=5;
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7466,7 +7640,7 @@ void prepareencounter(short type,char sec)
 			else creaturearray[CREATURE_SECURITYGUARD]=200;
 			creaturearray[CREATURE_CORPORATE_MANAGER]=5;
 			creaturearray[CREATURE_WORKER_SWEATSHOP]=800;
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7502,7 +7676,7 @@ void prepareencounter(short type,char sec)
 				creaturearray[CREATURE_WORKER_FACTORY_UNION]=1100;
 				}
 			else creaturearray[CREATURE_WORKER_FACTORY_UNION]=1600;
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7522,7 +7696,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_PRIEST]=1;
 			creaturearray[CREATURE_OFFICEWORKER]=800;
 			creaturearray[CREATURE_PROSTITUTE]=1;
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7542,7 +7716,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_LAWYER]=10;
 			creaturearray[CREATURE_PRIEST]=1;
 			creaturearray[CREATURE_PROSTITUTE]=10;
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7559,7 +7733,7 @@ void prepareencounter(short type,char sec)
 			creaturearray[CREATURE_RADIOPERSONALITY]=20;
 			creaturearray[CREATURE_ENGINEER]=400;
 			creaturearray[CREATURE_OFFICEWORKER]=400;
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7583,7 +7757,7 @@ void prepareencounter(short type,char sec)
 		creaturearray[CREATURE_NEWSANCHOR]=20000;
 	#endif
 
-			for(int n=0;n<random(6)+1;n++)
+			for(int n=0;n<LCSrandom(6)+1;n++)
 				{
 				makecreature(encounter[encslot],getrandomcreaturetype(creaturearray));
 				encslot++;
@@ -7667,6 +7841,7 @@ void printencounter(void)
 
 void makecreature(creaturest &cr,short type)
 {
+ int a = 0;
 	cr.creatureinit();
 
 	cr.exists=1;
@@ -7674,16 +7849,16 @@ void makecreature(creaturest &cr,short type)
 	cr.type=type;
 	getrecruitcreature(cr.name,type);
 	cr.armor.type=ARMOR_CLOTHES;
-	cr.money=random(21)+20;
-	cr.align=random(3)-1;
+	cr.money=LCSrandom(21)+20;
+	cr.align=LCSrandom(3)-1;
 	cr.worklocation=cursite;
 	verifyworklocation(cr);
 
-	int randomskills=random(5)+5;
+	int randomskills=LCSrandom(5)+5;
 
 	int redistatts=0;
 	int attcap[ATTNUM];
-	for(int a=0;a<ATTNUM;a++)attcap[a]=10;
+	for(a=0;a<ATTNUM;a++)attcap[a]=10;
 
 	int sk;
 
@@ -7694,26 +7869,26 @@ void makecreature(creaturest &cr,short type)
 			cr.weapon.ammo=6;
 			cr.clip[CLIP_22]=3;
 			cr.armor.type=ARMOR_SECURITYUNIFORM;
-			sk=random(2)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			cr.align=random(2)-1;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			cr.align=LCSrandom(2)-1;
 			break;
 		case CREATURE_SCIENTIST_LABTECH:
-			if(!random(2))cr.weapon.type=WEAPON_SYRINGE;
+			if(!LCSrandom(2))cr.weapon.type=WEAPON_SYRINGE;
 			cr.armor.type=ARMOR_LABCOAT;
 			cr.align=-1;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=28;
 			cr.att[ATTRIBUTE_INTELLIGENCE]=5;
-			sk=random(3);cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
 			break;
 		case CREATURE_JUDGE_CONSERVATIVE:
 			strcpy(cr.name,"Hangin' Judge");
-			if(!random(2))cr.weapon.type=WEAPON_GAVEL;
+			if(!LCSrandom(2))cr.weapon.type=WEAPON_GAVEL;
 			cr.armor.type=ARMOR_BLACKROBE;
-			cr.money=random(41)+20;
+			cr.money=LCSrandom(41)+20;
 			cr.align=-1;
 
-			sk=random(6)+5;cr.skill[SKILL_LAW]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
+			sk=LCSrandom(6)+5;cr.skill[SKILL_LAW]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=19;
 			cr.att[ATTRIBUTE_INTELLIGENCE]=5;
 			cr.att[ATTRIBUTE_WISDOM]=10;
@@ -7721,30 +7896,30 @@ void makecreature(creaturest &cr,short type)
 			break;
 		case CREATURE_JUDGE_LIBERAL:
 			strcpy(cr.name,"Liberal Judge");
-			if(!random(2))cr.weapon.type=WEAPON_GAVEL;
+			if(!LCSrandom(2))cr.weapon.type=WEAPON_GAVEL;
 			cr.armor.type=ARMOR_BLACKROBE;
-			cr.money=random(41)+20;
+			cr.money=LCSrandom(41)+20;
 			cr.align=1;
 
-			sk=random(6)+5;cr.skill[SKILL_LAW]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
+			sk=LCSrandom(6)+5;cr.skill[SKILL_LAW]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=19;
 			cr.att[ATTRIBUTE_INTELLIGENCE]=5;
 			cr.att[ATTRIBUTE_HEART]=10;
 			break;
 		case CREATURE_SCIENTIST_EMINENT:
-			if(!random(2))cr.weapon.type=WEAPON_SYRINGE;
+			if(!LCSrandom(2))cr.weapon.type=WEAPON_SYRINGE;
 			cr.armor.type=ARMOR_LABCOAT;
-			cr.money=random(41)+20;
+			cr.money=LCSrandom(41)+20;
 			cr.align=-1;
 
-			sk=random(3)+1;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=23;
 			cr.att[ATTRIBUTE_INTELLIGENCE]=10;
 			break;
 		case CREATURE_CORPORATE_MANAGER:
 			cr.armor.type=ARMOR_CHEAPSUIT;
-			cr.money=random(41)+40;
+			cr.money=LCSrandom(41)+40;
 			cr.align=-1;
 
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=28;
@@ -7752,7 +7927,7 @@ void makecreature(creaturest &cr,short type)
 			break;
 		case CREATURE_CORPORATE_CEO:
 			cr.armor.type=ARMOR_EXPENSIVESUIT;
-			cr.money=random(121)+120;
+			cr.money=LCSrandom(121)+120;
 			cr.align=-1;
 
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=21;
@@ -7769,36 +7944,36 @@ void makecreature(creaturest &cr,short type)
 			cr.align=1;
 			cr.juice=-20;
 			cr.flag|=CREATUREFLAG_ILLEGALALIEN;
-			sk=random(6)+5;cr.skill[SKILL_GARMENTMAKING]=sk;randomskills-=sk;
+			sk=LCSrandom(6)+5;cr.skill[SKILL_GARMENTMAKING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_WORKER_FACTORY_NONUNION:
 			strcpy(cr.name,"Nonunion Worker");
 			cr.weapon.type=WEAPON_CHAIN;
 			cr.armor.type=ARMOR_WORKCLOTHES;
-			cr.align=random(2)-1;
+			cr.align=LCSrandom(2)-1;
 
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=28;
 			cr.att[ATTRIBUTE_STRENGTH]=5;
 			break;
 		case CREATURE_WORKER_SECRETARY:
-			cr.align=random(3)-1;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_LANDLORD:
 			strcpy(cr.name,"Landlord");
-			cr.money=random(121)+120;
+			cr.money=LCSrandom(121)+120;
 			cr.align=0;
 			break;
 		case CREATURE_TEENAGER:
-			cr.align=random(3)-1;
+			cr.align=LCSrandom(3)-1;
 			randomskills>>=1;
 			break;
 		case CREATURE_LAWYER:
 			strcpy(cr.name,"Lawyer");
 			cr.armor.type=ARMOR_CHEAPSUIT;
-			cr.money=random(51)+50;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(51)+50;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(4)+4;cr.skill[SKILL_LAW]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+4;cr.skill[SKILL_LAW]=sk;randomskills-=sk;
 			break;
 		case CREATURE_WORKER_FACTORY_UNION:
 			strcpy(cr.name,"Union Worker");
@@ -7818,7 +7993,7 @@ void makecreature(creaturest &cr,short type)
 			break;
 		case CREATURE_MERC:
 			strcpy(cr.name,"Mercenary");
-			if(!random(2))cr.weapon.type=WEAPON_SEMIRIFLE_AK47;
+			if(!LCSrandom(2))cr.weapon.type=WEAPON_SEMIRIFLE_AK47;
 			else cr.weapon.type=WEAPON_SEMIRIFLE_M16;
 			cr.clip[CLIP_ASSAULT]=6;
 			cr.weapon.ammo=30;
@@ -7826,14 +8001,14 @@ void makecreature(creaturest &cr,short type)
 			cr.money=0;
 			cr.align=-1;
 
-			sk=random(4)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
-			sk=random(3);cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
-			sk=random(3);cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(3);cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_HICK:
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcpy(cr.name,"Country Boy");break;
 				case 1:strcpy(cr.name,"Hick");break;
@@ -7841,13 +8016,13 @@ void makecreature(creaturest &cr,short type)
 				case 3:strcpy(cr.name,"Rube");break;
 				case 4:strcpy(cr.name,"Yokel");break;
 				}
-			if(!random(2))cr.weapon.type=WEAPON_TORCH;
+			if(!LCSrandom(2))cr.weapon.type=WEAPON_TORCH;
 			else cr.weapon.type=WEAPON_PITCHFORK;
 
-			if(!random(2))cr.armor.type=ARMOR_OVERALLS;
+			if(!LCSrandom(2))cr.armor.type=ARMOR_OVERALLS;
 			else cr.armor.type=ARMOR_WIFEBEATER;
 
-			cr.money=random(6)+6;
+			cr.money=LCSrandom(6)+6;
 			cr.align=-1;
 			break;
 		case CREATURE_SOLDIER:
@@ -7859,20 +8034,20 @@ void makecreature(creaturest &cr,short type)
 			cr.money=0;
 			cr.align=-1;
 
-			sk=random(4)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
-			sk=random(3);cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
-			sk=random(3);cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(3);cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_COP:
-			if(!random(3))
+			if(!LCSrandom(3))
 				{
 				cr.weapon.type=WEAPON_SEMIPISTOL_9MM;
 				cr.clip[CLIP_9]=3;
 				cr.weapon.ammo=15;
 				}
-			else if(!random(2))
+			else if(!LCSrandom(2))
 				{
 				cr.weapon.type=WEAPON_SHOTGUN;
 				cr.clip[CLIP_BUCKSHOT]=6;
@@ -7880,38 +8055,38 @@ void makecreature(creaturest &cr,short type)
 				}
 			else cr.weapon.type=WEAPON_NIGHTSTICK;
 			cr.armor.type=ARMOR_POLICEUNIFORM;
-			cr.money=random(21)+20;
+			cr.money=LCSrandom(21)+20;
 			cr.align=-1;
 
-			sk=random(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_DEATHSQUAD:
 			cr.weapon.type=WEAPON_SEMIRIFLE_M16;
 			cr.clip[CLIP_ASSAULT]=6;
 			cr.weapon.ammo=30;
 			cr.armor.type=ARMOR_POLICEUNIFORM;
-			cr.money=random(21)+20;
+			cr.money=LCSrandom(21)+20;
 			cr.align=-1;
 
-			sk=random(4)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_GANGUNIT:
-			if(!random(3))
+			if(!LCSrandom(3))
 				{
 				cr.weapon.type=WEAPON_SEMIPISTOL_9MM;
 				cr.clip[CLIP_9]=3;
 				cr.weapon.ammo=15;
 				}
-			else if(!random(2))
+			else if(!LCSrandom(2))
 				{
 				cr.weapon.type=WEAPON_SHOTGUN;
 				cr.clip[CLIP_BUCKSHOT]=6;
@@ -7919,18 +8094,18 @@ void makecreature(creaturest &cr,short type)
 				}
 			else cr.weapon.type=WEAPON_NIGHTSTICK;
 			cr.armor.type=ARMOR_POLICEUNIFORM;
-			cr.money=random(21)+20;
+			cr.money=LCSrandom(21)+20;
 			cr.align=-1;
 
-			sk=random(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_PRISONGUARD:
 			strcpy(cr.name,"Prison Guard");
-			if(!random(3))
+			if(!LCSrandom(3))
 				{
 				cr.weapon.type=WEAPON_SHOTGUN;
 				cr.clip[CLIP_BUCKSHOT]=6;
@@ -7938,18 +8113,18 @@ void makecreature(creaturest &cr,short type)
 				}
 			else cr.weapon.type=WEAPON_NIGHTSTICK;
 			cr.armor.type=ARMOR_PRISONGUARD;
-			cr.money=random(21)+20;
+			cr.money=LCSrandom(21)+20;
 			cr.align=-1;
 
-			sk=random(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_EDUCATOR:
 			strcpy(cr.name,"Educator");
-			if(!random(3))
+			if(!LCSrandom(3))
 				{
 				cr.weapon.type=WEAPON_SEMIPISTOL_9MM;
 				cr.clip[CLIP_9]=3;
@@ -7957,18 +8132,18 @@ void makecreature(creaturest &cr,short type)
 				}
 			else cr.weapon.type=WEAPON_SYRINGE;
 			cr.armor.type=ARMOR_LABCOAT;
-			cr.money=random(21)+20;
+			cr.money=LCSrandom(21)+20;
 			cr.align=-1;
 
-			sk=random(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_CLUB]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(2);cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_AGENT:
 			strcpy(cr.name,"Agent");
-			switch(random(7))
+			switch(LCSrandom(7))
 				{
 				case 0:
 					cr.weapon.type=WEAPON_REVOLVER_22;
@@ -8009,11 +8184,11 @@ void makecreature(creaturest &cr,short type)
 			cr.armor.type=ARMOR_BLACKSUIT;
 			cr.align=-1;
 
-			sk=random(8)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(8)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
-			sk=random(8)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
-			sk=random(8)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
-			sk=random(8)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(8)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(8)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(8)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(8)+1;cr.skill[SKILL_HANDTOHAND]=sk;randomskills-=sk;
+			sk=LCSrandom(8)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=20;
 			cr.att[ATTRIBUTE_STRENGTH]=5;
 			cr.att[ATTRIBUTE_AGILITY]=5;
@@ -8022,10 +8197,10 @@ void makecreature(creaturest &cr,short type)
 		case CREATURE_RADIOPERSONALITY:
 			strcpy(cr.name,"Radio Personality");
 			cr.armor.type=ARMOR_EXPENSIVESUIT;
-			cr.money=random(51)+50;
+			cr.money=LCSrandom(51)+50;
 			cr.align=-1;
 
-			sk=random(8)+1;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
+			sk=LCSrandom(8)+1;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=19;
 			cr.att[ATTRIBUTE_CHARISMA]=10;
 			cr.att[ATTRIBUTE_WISDOM]=5;
@@ -8033,7 +8208,7 @@ void makecreature(creaturest &cr,short type)
 		case CREATURE_NEWSANCHOR:
 			strcpy(cr.name,"News Anchor");
 			cr.armor.type=ARMOR_EXPENSIVESUIT;
-			cr.money=random(51)+50;
+			cr.money=LCSrandom(51)+50;
 
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=19;
 			cr.att[ATTRIBUTE_CHARISMA]=10;
@@ -8041,7 +8216,7 @@ void makecreature(creaturest &cr,short type)
 			cr.align=-1;
 			break;
 		case CREATURE_GENETIC:
-			switch(random(10))
+			switch(LCSrandom(10))
 				{
 				case 0:strcpy(cr.name,"Genetic Monster");break;
 				case 1:
@@ -8076,16 +8251,16 @@ void makecreature(creaturest &cr,short type)
 			break;
 		case CREATURE_PRISONER:
 			strcpy(cr.name,"Prisoner");
-			if(!random(2))cr.weapon.type=WEAPON_SHANK;
+			if(!LCSrandom(2))cr.weapon.type=WEAPON_SHANK;
 			cr.armor.type=ARMOR_PRISONER;
 			cr.money=0;
-			cr.align=random(3)-1;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(5)+1;cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
+			sk=LCSrandom(5)+1;cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
 			break;
 		case CREATURE_JUROR:
 			strcpy(cr.name,"Angry Juror");
-			if(!random(5))cr.weapon.type=WEAPON_KNIFE;
+			if(!LCSrandom(5))cr.weapon.type=WEAPON_KNIFE;
 			cr.armor.type=ARMOR_CLOTHES;
 			cr.money=0;
 			cr.align=-1;
@@ -8095,103 +8270,103 @@ void makecreature(creaturest &cr,short type)
 			cr.weapon.type=WEAPON_CHAIN;
 			cr.armor.type=ARMOR_WORKCLOTHES;
 			cr.money=0;
-			cr.align=random(2);
+			cr.align=LCSrandom(2);
 			randomskills=1;
 			break;
 		case CREATURE_SEWERWORKER:
 			strcpy(cr.name,"Sewer Worker");
 			cr.armor.type=ARMOR_WORKCLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_COLLEGESTUDENT:
 			strcpy(cr.name,"College Student");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_MUSICIAN:
 			strcpy(cr.name,"Musician");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(11);
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(11);
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_MATHEMATICIAN:
 			strcpy(cr.name,"Mathematician");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(3);cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
+			sk=LCSrandom(3);cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=26;
 			cr.att[ATTRIBUTE_INTELLIGENCE]=7;
 			break;
 		case CREATURE_TEACHER:
 			strcpy(cr.name,"Teacher");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_HSDROPOUT:
 			strcpy(cr.name,"Highschool Dropout");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_BUM:
 			strcpy(cr.name,"Transient");
-			if(!random(5))cr.weapon.type=WEAPON_KNIFE;
+			if(!LCSrandom(5))cr.weapon.type=WEAPON_KNIFE;
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(2);
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(2);
 			break;
 		case CREATURE_MUTANT:
 			strcpy(cr.name,"Mutant");
-			if(!random(5))cr.weapon.type=WEAPON_KNIFE;
+			if(!LCSrandom(5))cr.weapon.type=WEAPON_KNIFE;
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
+			cr.money=LCSrandom(31)+20;
 			cr.align=1;
 			for(a=0;a<ATTNUM;a++)
 				{
 				cr.att[a]=1;
 				attcap[a]=50;
 				}
-			redistatts=random(55);
+			redistatts=LCSrandom(55);
 			break;
 		case CREATURE_GANGMEMBER:
 			strcpy(cr.name,"Gang Member");
 
-			if(!random(20))
+			if(!LCSrandom(20))
 				{
 				cr.weapon.type=WEAPON_SEMIRIFLE_AK47;
 				cr.weapon.ammo=30;
 				cr.clip[CLIP_ASSAULT]=2;
 				}
-			else if(!random(16))
+			else if(!LCSrandom(16))
 				{
 				cr.weapon.type=WEAPON_REVOLVER_44;
 				cr.weapon.ammo=6;
 				cr.clip[CLIP_44]=3;
 				}
-			else if(!random(15))
+			else if(!LCSrandom(15))
 				{
 				cr.weapon.type=WEAPON_SEMIPISTOL_45;
 				cr.weapon.ammo=15;
 				cr.clip[CLIP_45]=3;
 				}
-			else if(!random(10))
+			else if(!LCSrandom(10))
 				{
 				cr.weapon.type=WEAPON_SHOTGUN;
 				cr.weapon.ammo=2;
 				cr.clip[CLIP_BUCKSHOT]=3;
 				}
-			else if(!random(4))
+			else if(!LCSrandom(4))
 				{
 				cr.weapon.type=WEAPON_SEMIPISTOL_9MM;
 				cr.weapon.ammo=15;
 				cr.clip[CLIP_9]=3;
 				}
-			else if(!random(2))
+			else if(!LCSrandom(2))
 				{
 				cr.weapon.type=WEAPON_REVOLVER_22;
 				cr.weapon.ammo=6;
@@ -8199,19 +8374,19 @@ void makecreature(creaturest &cr,short type)
 				}
 
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(2);
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(2);
 
-			sk=random(2)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
-			sk=random(2)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_PISTOL]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_ASSAULTRIFLE]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_RIFLE]=sk;randomskills-=sk;
 			break;
 		case CREATURE_CRACKHEAD:
 			strcpy(cr.name,"Crack Head");
-			if(!random(5))cr.weapon.type=WEAPON_KNIFE;
+			if(!LCSrandom(5))cr.weapon.type=WEAPON_KNIFE;
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(2);
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(2);
 
 			//NOTE: DO NOT REDISTRIBUTE
 			cr.att[ATTRIBUTE_INTELLIGENCE]=1;
@@ -8220,42 +8395,42 @@ void makecreature(creaturest &cr,short type)
 		case CREATURE_PRIEST:
 			strcpy(cr.name,"Priest");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_ENGINEER:
 			strcpy(cr.name,"Engineer");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(2)+1;cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
 			break;
 		case CREATURE_FASTFOODWORKER:
 			strcpy(cr.name,"Fast Food Worker");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_TELEMARKETER:
 			strcpy(cr.name,"Telemarketer");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_OFFICEWORKER:
 			strcpy(cr.name,"Office Worker");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_FOOTBALLCOACH:
 			strcpy(cr.name,"Football Coach");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 
-			if(random(2))
+			if(LCSrandom(2))
 				{
 				for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=20;
 				cr.att[ATTRIBUTE_HEALTH]=5;
@@ -8265,57 +8440,57 @@ void makecreature(creaturest &cr,short type)
 			break;
 		case CREATURE_PROSTITUTE:
 			strcpy(cr.name,"Prostitute");
-			if(random(2))cr.armor.type=ARMOR_CHEAPDRESS;
+			if(LCSrandom(2))cr.armor.type=ARMOR_CHEAPDRESS;
 			else cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(2);
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(2);
 			break;
 		case CREATURE_MAILMAN:
 			strcpy(cr.name,"Mail Carrier");
 			cr.armor.type=ARMOR_WORKCLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_GARBAGEMAN:
 			strcpy(cr.name,"Garbage Collector");
 			cr.armor.type=ARMOR_WORKCLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
-			sk=random(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_PLUMBER:
 			strcpy(cr.name,"Plumber");
 			cr.armor.type=ARMOR_WORKCLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_CHEF:
 			strcpy(cr.name,"Chef");
 			cr.armor.type=ARMOR_WORKCLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_CONSTRUCTIONWORKER:
 			strcpy(cr.name,"Construction Worker");
 			cr.armor.type=ARMOR_WORKCLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=20;
 			cr.att[ATTRIBUTE_STRENGTH]=7;
 			cr.att[ATTRIBUTE_HEALTH]=7;
-			sk=random(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			sk=LCSrandom(2)+1;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_AMATEURMAGICIAN:
 			strcpy(cr.name,"Amateur Magician");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 			break;
 		case CREATURE_HIPPIE:
 			strcpy(cr.name,"Hippie");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
+			cr.money=LCSrandom(31)+20;
 			cr.align=1;
 
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=32;
@@ -8323,73 +8498,73 @@ void makecreature(creaturest &cr,short type)
 			break;
 		case CREATURE_AUTHOR:
 			cr.armor.type=ARMOR_CHEAPSUIT;
-			cr.money=random(131)+100;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(131)+100;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
-			sk=random(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_JOURNALIST:
 			cr.armor.type=ARMOR_CHEAPSUIT;
-			cr.money=random(131)+100;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(131)+100;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
-			sk=random(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_CRITIC_ART:
 			cr.armor.type=ARMOR_CHEAPSUIT;
-			cr.money=random(131)+100;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(131)+100;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
-			sk=random(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_CRITIC_MUSIC:
 			cr.armor.type=ARMOR_CHEAPSUIT;
-			cr.money=random(131)+100;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(131)+100;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
-			sk=random(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
+			sk=LCSrandom(4)+2;cr.skill[SKILL_WRITING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_SOCIALITE:
 			strcpy(cr.name,"Socialite");
-			if(random(2))cr.armor.type=ARMOR_EXPENSIVEDRESS;
+			if(LCSrandom(2))cr.armor.type=ARMOR_EXPENSIVEDRESS;
 			else cr.armor.type=ARMOR_EXPENSIVESUIT;
-			cr.money=random(131)+100;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(131)+100;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(3)+1;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
+			sk=LCSrandom(3)+1;cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
 			break;
 		case CREATURE_BIKER:
 			strcpy(cr.name,"Biker");
 			cr.armor.type=ARMOR_TRENCHCOAT;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
-			sk=random(3)+3;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
+			sk=LCSrandom(3)+3;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_TRUCKER:
 			strcpy(cr.name,"Truck Driver");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
-			sk=random(3)+3;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
+			sk=LCSrandom(3)+3;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_TAXIDRIVER:
 			strcpy(cr.name,"Taxi Driver");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
-			sk=random(3)+3;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
+			sk=LCSrandom(3)+3;cr.skill[SKILL_DRIVING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_PROGRAMMER:
 			strcpy(cr.name,"Programmer");
 			cr.armor.type=ARMOR_CLOTHES;
-			cr.money=random(31)+20;
-			cr.align=random(3)-1;
+			cr.money=LCSrandom(31)+20;
+			cr.align=LCSrandom(3)-1;
 
-			sk=random(5)+4;cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
+			sk=LCSrandom(5)+4;cr.skill[SKILL_COMPUTERS]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=30;
 			cr.att[ATTRIBUTE_INTELLIGENCE]=3;
 			break;
@@ -8414,12 +8589,12 @@ void makecreature(creaturest &cr,short type)
 		case CREATURE_HAIRSTYLIST:
 			break;
 		case CREATURE_FASHIONDESIGNER:
-			sk=random(6)+5;cr.skill[SKILL_GARMENTMAKING]=sk;randomskills-=sk;
+			sk=LCSrandom(6)+5;cr.skill[SKILL_GARMENTMAKING]=sk;randomskills-=sk;
 			break;
 		case CREATURE_CLERK:
 			break;
 		case CREATURE_THIEF:
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:getrecruitcreature(cr.name,CREATURE_SOCIALITE);break;
 				case 1:getrecruitcreature(cr.name,CREATURE_CLERK);break;
@@ -8427,12 +8602,12 @@ void makecreature(creaturest &cr,short type)
 				case 3:getrecruitcreature(cr.name,CREATURE_CRITIC_ART);break;
 				case 4:getrecruitcreature(cr.name,CREATURE_CRITIC_MUSIC);break;
 				}
-			sk=random(5)+3;cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
-			sk=random(5)+3;cr.skill[SKILL_DISGUISE]=sk;randomskills-=sk;
+			sk=LCSrandom(5)+3;cr.skill[SKILL_SECURITY]=sk;randomskills-=sk;
+			sk=LCSrandom(5)+3;cr.skill[SKILL_DISGUISE]=sk;randomskills-=sk;
 			break;
 		case CREATURE_ACTOR:
-			sk=random(5);cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
-			sk=random(5)+3;cr.skill[SKILL_DISGUISE]=sk;randomskills-=sk;
+			sk=LCSrandom(5);cr.skill[SKILL_PERSUASION]=sk;randomskills-=sk;
+			sk=LCSrandom(5)+3;cr.skill[SKILL_DISGUISE]=sk;randomskills-=sk;
 			for(a=0;a<ATTNUM;a++)cr.att[a]=1;redistatts=24;
 			cr.att[ATTRIBUTE_WISDOM]=9;
 			break;
@@ -8454,7 +8629,7 @@ void makecreature(creaturest &cr,short type)
 		{
 		while(redistatts>0)
 			{
-			a=random(ATTNUM);
+			a=LCSrandom(ATTNUM);
 			if(cr.att[a]<attcap[a])
 				{
 				cr.att[a]++;
@@ -8466,7 +8641,7 @@ void makecreature(creaturest &cr,short type)
 	//RANDOM STARTING SKILLS
 	while(randomskills>0)
 		{
-		cr.skill[random(SKILLNUM)]++;
+		cr.skill[LCSrandom(SKILLNUM)]++;
 		randomskills--;
 		}
 
@@ -9009,13 +9184,13 @@ void youattack(void)
 
 		if(goodtarg.size()==0)return;
 
-		int target=goodtarg[random(goodtarg.size())];
+		int target=goodtarg[LCSrandom(goodtarg.size())];
 
 		char mistake=0;
 
-		if(badtarg.size()>0 && !random(10))
+		if(badtarg.size()>0 && !LCSrandom(10))
 			{
-			target=badtarg[random(badtarg.size())];
+			target=badtarg[LCSrandom(badtarg.size())];
 			mistake=1;
 			addjuice(*activesquad->squad[p],-5);
 			}
@@ -9076,13 +9251,13 @@ void youattack(void)
 
 					if(goodtarg.size()==0)return;
 
-					int target=goodtarg[random(goodtarg.size())];
+					int target=goodtarg[LCSrandom(goodtarg.size())];
 
 					char mistake=0;
 
-					if(badtarg.size()>0 && !random(10))
+					if(badtarg.size()>0 && !LCSrandom(10))
 						{
-						target=badtarg[random(badtarg.size())];
+						target=badtarg[LCSrandom(badtarg.size())];
 						mistake=1;
 						}
 
@@ -9134,8 +9309,9 @@ void enemyattack(void)
 	return;
 #endif
 
+	int e2, e;
 	char printed;
-	for(int e=0;e<ENCMAX;e++)
+	for(e=0;e<ENCMAX;e++)
 		{
 		if(!encounter[e].exists)continue;
 		if(!encounter[e].alive)continue;
@@ -9168,7 +9344,7 @@ void enemyattack(void)
 					(encounter[e].wound[BODYPART_LEG_LEFT] & WOUND_NASTYOFF)||
 					(encounter[e].wound[BODYPART_LEG_LEFT] & WOUND_CLEANOFF))
 					{
-					switch(random(3))
+					switch(LCSrandom(3))
 						{
 						case 0:addstr(" crawls off moaning...");break;
 						case 1:addstr(" crawls off wimpering...");break;
@@ -9177,7 +9353,7 @@ void enemyattack(void)
 					}
 				else
 					{
-					switch(random(5))
+					switch(LCSrandom(5))
 						{
 						case 0:addstr(" runs off screaming!");break;
 						case 1:addstr(" escapes crying!");break;
@@ -9212,7 +9388,7 @@ void enemyattack(void)
 				}
 			}
 
-		for(int e2=0;e2<ENCMAX;e2++)
+		for(e2=0;e2<ENCMAX;e2++)
 			{
 			if(!encounter[e].exists)continue;
 			if(!encounter[e].alive)continue;
@@ -9223,7 +9399,7 @@ void enemyattack(void)
 
 		if(goodtarg.size()==0)return;
 
-		int target=goodtarg[random(goodtarg.size())];
+		int target=goodtarg[LCSrandom(goodtarg.size())];
 
 		char canmistake=1;
 
@@ -9240,7 +9416,7 @@ void enemyattack(void)
 		char actual;
 		if(canmistake)
 			{
-			if(activesquad->squad[target]->prisoner!=NULL && !random(2))
+			if(activesquad->squad[target]->prisoner!=NULL && !LCSrandom(2))
 				{
 				attack(encounter[e],*activesquad->squad[target]->prisoner,1,actual);
 				if(!activesquad->squad[target]->prisoner->alive)
@@ -9277,9 +9453,9 @@ void enemyattack(void)
 				continue;
 				}
 
-			if(!random(10)&&badtarg.size()>0)
+			if(!LCSrandom(10)&&badtarg.size()>0)
 				{
-				int target=badtarg[random(badtarg.size())];
+				int target=badtarg[LCSrandom(badtarg.size())];
 				attack(encounter[e],encounter[target],1,actual);
 				if(!encounter[target].alive)delenc(target,1);
 				continue;
@@ -9337,14 +9513,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 			strcpy(str,a.name);
 			strcat(str," ");
 
-			int attack=random(a.attval(ATTRIBUTE_WISDOM))+
+			int attack=LCSrandom(a.attval(ATTRIBUTE_WISDOM))+
 				t.attval(ATTRIBUTE_WISDOM,0);
 
 			switch(a.type)
 				{
 				case CREATURE_JUDGE_CONSERVATIVE:
 				case CREATURE_JUDGE_LIBERAL:
-					switch(random(4))
+					switch(LCSrandom(4))
 						{
 						case 0:strcat(str,"debates the death penalty with");break;
 						case 1:strcat(str,"debates gay rights with");break;
@@ -9356,10 +9532,10 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					strcat(str,"!");
 					resist=t.attval(ATTRIBUTE_INTELLIGENCE,0)+
 						t.attval(ATTRIBUTE_HEART,0)+t.skill[SKILL_LAW];
-					attack+=random(a.attval(ATTRIBUTE_INTELLIGENCE)/2+1)+random(a.skill[SKILL_LAW]+1);
+					attack+=LCSrandom(a.attval(ATTRIBUTE_INTELLIGENCE)/2+1)+LCSrandom(a.skill[SKILL_LAW]+1);
 					break;
 				case CREATURE_SCIENTIST_EMINENT:
-					switch(random(3))
+					switch(LCSrandom(3))
 						{
 						case 0:strcat(str,"debates scientific ethics with");break;
 						case 1:strcat(str,"explains the benefits of research to");break;
@@ -9370,10 +9546,10 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					strcat(str,"!");
 					resist=t.attval(ATTRIBUTE_INTELLIGENCE,0)+
 						t.attval(ATTRIBUTE_HEART,0);
-					attack+=random(a.attval(ATTRIBUTE_INTELLIGENCE));
+					attack+=LCSrandom(a.attval(ATTRIBUTE_INTELLIGENCE));
 					break;
 				case CREATURE_CORPORATE_CEO:
-					switch(random(10))
+					switch(LCSrandom(10))
 						{
 						case 0:strcat(str,"explains the derivatives market to");break;
 						case 1:strcat(str,"justifies voodoo economics to");break;
@@ -9390,11 +9566,11 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					strcat(str,t.name);
 					strcat(str,"!");
 					resist=t.attval(ATTRIBUTE_HEART,0);
-					attack+=random(a.skill[SKILL_PERSUASION]+1);
+					attack+=LCSrandom(a.skill[SKILL_PERSUASION]+1);
 					break;
 				case CREATURE_RADIOPERSONALITY:
 				case CREATURE_NEWSANCHOR:
-					switch(random(5))
+					switch(LCSrandom(5))
 						{
 						case 0:strcat(str,"winks at");break;
 						case 1:strcat(str,"smiles at");break;
@@ -9407,7 +9583,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					strcat(str,"!");
 					resist=t.attval(ATTRIBUTE_CHARISMA,0)+
 						t.attval(ATTRIBUTE_HEART,0);
-					attack+=random(a.attval(ATTRIBUTE_CHARISMA));
+					attack+=LCSrandom(a.attval(ATTRIBUTE_CHARISMA));
 					break;
 				}
 
@@ -9423,7 +9599,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					addstr(" loses juice!");
 					addjuice(t,-100);
 					}
-				else if(random(2))
+				else if(LCSrandom(2))
 					{
 					move(17,1);
 					addstr(t.name);
@@ -9463,7 +9639,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 								if(pool[pl]==activesquad->squad[p])
 									{
 									delete pool[pl];
-									pool.verase(pl);
+									pool.erase(pool.begin() + pl);
 									break;
 									}
 								}
@@ -9599,10 +9775,10 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 		}
 
 	//BASIC ROLL
-	int aroll=random(20)+1+random(a.attval(ATTRIBUTE_AGILITY));
-	if(a.prisoner!=NULL)aroll-=random(10);
-	int droll=random(20)+1+random(t.attval(ATTRIBUTE_AGILITY));
-	if(t.prisoner!=NULL)droll-=random(10);
+	int aroll=LCSrandom(20)+1+LCSrandom(a.attval(ATTRIBUTE_AGILITY));
+	if(a.prisoner!=NULL)aroll-=LCSrandom(10);
+	int droll=LCSrandom(20)+1+LCSrandom(t.attval(ATTRIBUTE_AGILITY));
+	if(t.prisoner!=NULL)droll-=LCSrandom(10);
 
 	healthmodroll(aroll,a);
 	healthmodroll(droll,t);
@@ -9614,13 +9790,13 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 	switch(a.weapon.type)
 		{
 		case WEAPON_NONE:
-			aroll+=random(a.skill[SKILL_HANDTOHAND]+1);
+			aroll+=LCSrandom(a.skill[SKILL_HANDTOHAND]+1);
 			a.skill_ip[SKILL_HANDTOHAND]+=droll;
 			break;
 		case WEAPON_KNIFE:
 		case WEAPON_SHANK:
 		case WEAPON_SYRINGE:
-			aroll+=random(a.skill[SKILL_KNIFE]+1);
+			aroll+=LCSrandom(a.skill[SKILL_KNIFE]+1);
 			a.skill_ip[SKILL_KNIFE]+=droll;
 			break;
 		case WEAPON_CROWBAR:
@@ -9633,35 +9809,35 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 		case WEAPON_CROSS:
 		case WEAPON_STAFF:
 		case WEAPON_TORCH:
-			aroll+=random(a.skill[SKILL_CLUB]+1);
+			aroll+=LCSrandom(a.skill[SKILL_CLUB]+1);
 			a.skill_ip[SKILL_CLUB]+=droll;
 			break;
 		case WEAPON_SWORD:
-			aroll+=random(a.skill[SKILL_SWORD]+1);
+			aroll+=LCSrandom(a.skill[SKILL_SWORD]+1);
 			a.skill_ip[SKILL_SWORD]+=droll;
 			break;
 		case WEAPON_PITCHFORK:
-			aroll+=random(a.skill[SKILL_SPEAR]+1);
+			aroll+=LCSrandom(a.skill[SKILL_SPEAR]+1);
 			a.skill_ip[SKILL_SPEAR]+=droll;
 			break;
 		case WEAPON_AXE:
-			aroll+=random(a.skill[SKILL_AXE]+1);
+			aroll+=LCSrandom(a.skill[SKILL_AXE]+1);
 			a.skill_ip[SKILL_AXE]+=droll;
 			break;
 		case WEAPON_REVOLVER_22:
 		case WEAPON_REVOLVER_44:
 		case WEAPON_SEMIPISTOL_9MM:
 		case WEAPON_SEMIPISTOL_45:
-			aroll+=random(a.skill[SKILL_PISTOL]+1);
+			aroll+=LCSrandom(a.skill[SKILL_PISTOL]+1);
 			a.skill_ip[SKILL_PISTOL]+=droll;
 			break;
 		case WEAPON_SHOTGUN:
-			aroll+=random(a.skill[SKILL_RIFLE]+1);
+			aroll+=LCSrandom(a.skill[SKILL_RIFLE]+1);
 			a.skill_ip[SKILL_PISTOL]+=droll;
 			break;
 		case WEAPON_SEMIRIFLE_M16:
 		case WEAPON_SEMIRIFLE_AK47:
-			aroll+=random(a.skill[SKILL_ASSAULTRIFLE]+1);
+			aroll+=LCSrandom(a.skill[SKILL_ASSAULTRIFLE]+1);
 			a.skill_ip[SKILL_ASSAULTRIFLE]+=droll;
 			break;
 		}
@@ -9691,7 +9867,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 		
 		do
 			{
-			w=random(BODYPARTNUM);
+			w=LCSrandom(BODYPARTNUM);
 			}while((t.wound[w]&WOUND_CLEANOFF) || (t.wound[w]&WOUND_NASTYOFF));
 
 		if(t.animalgloss==ANIMALGLOSS_TANK)
@@ -9741,13 +9917,13 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 		switch(a.weapon.type)
 			{
 			case WEAPON_NONE:
-				damamount=random(5)+1;
+				damamount=LCSrandom(5)+1;
 				if(!a.animalgloss)damtype|=WOUND_BRUISED;
 				else
 					{
 					if(a.specialattack==ATTACK_CANNON)
 						{
-						damamount=random(500)+500;
+						damamount=LCSrandom(500)+500;
 						damtype|=WOUND_BURNED;
 						damtype|=WOUND_TORN;
 						}
@@ -9760,25 +9936,25 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 				break;
 			case WEAPON_CROWBAR:
 				damtype|=WOUND_BRUISED;
-				damamount=random(80)+10;
+				damamount=LCSrandom(80)+10;
 				strengthmod=1;
 				break;
 			case WEAPON_MAUL:
 			case WEAPON_BASEBALLBAT:
 				damtype|=WOUND_BRUISED;
-				damamount=random(100)+10;
+				damamount=LCSrandom(100)+10;
 				strengthmod=1;
 				break;
 			case WEAPON_PITCHFORK:
 				damtype|=WOUND_CUT;
 				damtype|=WOUND_BLEEDING;
-				damamount=random(50)+5;
+				damamount=LCSrandom(50)+5;
 				strengthmod=1;
 				damagearmor=1;
 				break;
 			case WEAPON_TORCH:
 				damtype|=WOUND_BURNED;
-				damamount=random(10)+1;
+				damamount=LCSrandom(10)+1;
 				strengthmod=1;
 				damagearmor=1;
 				break;
@@ -9786,14 +9962,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 			case WEAPON_KNIFE:
 				damtype|=WOUND_CUT;
 				damtype|=WOUND_BLEEDING;
-				damamount=random(10)+1;
+				damamount=LCSrandom(10)+1;
 				strengthmod=1;
 				severtype=WOUND_CLEANOFF;
 				damagearmor=1;
 				break;
 			case WEAPON_SYRINGE:
 				damtype|=WOUND_CUT;
-				damamount=random(5)+1;
+				damamount=LCSrandom(5)+1;
 				strengthmod=1;
 				break;
 			case WEAPON_REVOLVER_22:
@@ -9801,14 +9977,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					{
 					damtype|=WOUND_SHOT;
 					damtype|=WOUND_BLEEDING;
-					damamount=random(150)+10;
+					damamount=LCSrandom(150)+10;
 					severtype=WOUND_NASTYOFF;
 					damagearmor=1;
 					}
 				else
 					{
 					damtype|=WOUND_BRUISED;
-					damamount=random(20)+5;
+					damamount=LCSrandom(20)+5;
 					strengthmod=1;
 					}
 				break;
@@ -9817,14 +9993,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					{
 					damtype|=WOUND_SHOT;
 					damtype|=WOUND_BLEEDING;
-					damamount=random(300)+10;
+					damamount=LCSrandom(300)+10;
 					severtype=WOUND_NASTYOFF;
 					damagearmor=1;
 					}
 				else
 					{
 					damtype|=WOUND_BRUISED;
-					damamount=random(20)+5;
+					damamount=LCSrandom(20)+5;
 					strengthmod=1;
 					}
 				break;
@@ -9833,14 +10009,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					{
 					damtype|=WOUND_SHOT;
 					damtype|=WOUND_BLEEDING;
-					damamount=random(200)+10;
+					damamount=LCSrandom(200)+10;
 					severtype=WOUND_NASTYOFF;
 					damagearmor=1;
 					}
 				else
 					{
 					damtype|=WOUND_BRUISED;
-					damamount=random(20)+5;
+					damamount=LCSrandom(20)+5;
 					strengthmod=1;
 					}
 				break;
@@ -9849,14 +10025,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					{
 					damtype|=WOUND_SHOT;
 					damtype|=WOUND_BLEEDING;
-					damamount=random(200)+10;
+					damamount=LCSrandom(200)+10;
 					severtype=WOUND_NASTYOFF;
 					damagearmor=1;
 					}
 				else
 					{
 					damtype|=WOUND_BRUISED;
-					damamount=random(20)+5;
+					damamount=LCSrandom(20)+5;
 					strengthmod=1;
 					}
 				break;
@@ -9865,14 +10041,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					{
 					damtype|=WOUND_SHOT;
 					damtype|=WOUND_BLEEDING;
-					damamount=random(300)+10;
+					damamount=LCSrandom(300)+10;
 					severtype=WOUND_NASTYOFF;
 					damagearmor=1;
 					}
 				else
 					{
 					damtype|=WOUND_BRUISED;
-					damamount=random(30)+5;
+					damamount=LCSrandom(30)+5;
 					strengthmod=1;
 					}
 				break;
@@ -9881,14 +10057,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					{
 					damtype|=WOUND_SHOT;
 					damtype|=WOUND_BLEEDING;
-					damamount=random(300)+10;
+					damamount=LCSrandom(300)+10;
 					severtype=WOUND_NASTYOFF;
 					damagearmor=1;
 					}
 				else
 					{
 					damtype|=WOUND_BRUISED;
-					damamount=random(30)+5;
+					damamount=LCSrandom(30)+5;
 					strengthmod=1;
 					}
 				break;
@@ -9897,14 +10073,14 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 					{
 					damtype|=WOUND_SHOT;
 					damtype|=WOUND_BLEEDING;
-					damamount=random(300)+10;
+					damamount=LCSrandom(300)+10;
 					severtype=WOUND_NASTYOFF;
 					damagearmor=1;
 					}
 				else
 					{
 					damtype|=WOUND_BRUISED;
-					damamount=random(30)+5;
+					damamount=LCSrandom(30)+5;
 					strengthmod=1;
 					}
 				break;
@@ -9912,7 +10088,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 			case WEAPON_SWORD:
 				damtype|=WOUND_CUT;
 				damtype|=WOUND_BLEEDING;
-				damamount=random(100)+10;
+				damamount=LCSrandom(100)+10;
 				strengthmod=1;
 				severtype=WOUND_CLEANOFF;
 				damagearmor=1;
@@ -9922,17 +10098,17 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 			case WEAPON_STAFF:
 			case WEAPON_CHAIN:
 				damtype|=WOUND_BRUISED;
-				damamount=random(30)+5;
+				damamount=LCSrandom(30)+5;
 				strengthmod=1;
 				break;
 			case WEAPON_NIGHTSTICK:
 				damtype|=WOUND_BRUISED;
-				damamount=random(30)+5;
+				damamount=LCSrandom(30)+5;
 				strengthmod=1;
 				break;
 			case WEAPON_GAVEL:
 				damtype|=WOUND_BRUISED;
-				damamount=random(20)+5;
+				damamount=LCSrandom(20)+5;
 				strengthmod=1;
 				break;
 			}
@@ -10100,7 +10276,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 						clearmessagearea();
 						set_color(COLOR_MAGENTA,COLOR_BLACK,1);
 
-						switch(random(7))
+						switch(LCSrandom(7))
 							{
 							case 0:
 								if((t.special[SPECIALWOUND_RIGHTEYE]||
@@ -10127,7 +10303,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 							case 1:
 								if(t.special[SPECIALWOUND_TEETH]>0)
 									{
-									int teethminus=random(TOOTHNUM)+1;
+									int teethminus=LCSrandom(TOOTHNUM)+1;
 									if(teethminus>t.special[SPECIALWOUND_TEETH])teethminus=t.special[SPECIALWOUND_TEETH];
 									char num[20];
 									itoa(teethminus,num,10);
@@ -10257,7 +10433,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 						clearmessagearea();
 						set_color(COLOR_MAGENTA,COLOR_BLACK,1);
 
-						switch(random(11))
+						switch(LCSrandom(11))
 							{
 							case 0:
 								if(t.special[SPECIALWOUND_UPPERSPINE]&&
@@ -10421,7 +10597,7 @@ void attack(creaturest &a,creaturest &t,char mistake,char &actual)
 								if(t.special[SPECIALWOUND_RIBS]>0&&
 									breakdam)
 									{
-									int ribminus=random(RIBNUM)+1;
+									int ribminus=LCSrandom(RIBNUM)+1;
 									if(ribminus>t.special[SPECIALWOUND_RIBS])ribminus=t.special[SPECIALWOUND_RIBS];
 									char num[20];
 									itoa(ribminus,num,10);
@@ -10552,6 +10728,7 @@ void damagemod(creaturest &t,char &damtype,int &damamount,int mod)
 
 void creatureadvance(void)
 {
+	int e;
 	for(int p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]==NULL)continue;
@@ -10609,7 +10786,7 @@ void creatureadvance(void)
 		autopromote(cursite);
 		}
 
-	for(int e=0;e<ENCMAX;e++)
+	for(e=0;e<ENCMAX;e++)
 		{
 		if(!encounter[e].exists)continue;
 		if(!encounter[e].alive)continue;
@@ -10922,7 +11099,7 @@ void equip(vector<itemst *> &loot,int loc)
 							if(loot[slot]->number==0)
 								{
 								delete loot[slot];
-								loot.verase(slot);
+								loot.erase(loot.begin() + slot);
 								}
 
 							//DROP ALL CLIPS THAT DON'T WORK
@@ -10959,7 +11136,7 @@ void equip(vector<itemst *> &loot,int loc)
 							if(loot[slot]->number==0)
 								{
 								delete loot[slot];
-								loot.verase(slot);
+								loot.erase(loot.begin() + slot);
 								}
 
 							if(page*18>=loot.size()&&page!=0)page--;
@@ -10975,7 +11152,7 @@ void equip(vector<itemst *> &loot,int loc)
 								if(loot[slot]->number==0)
 									{
 									delete loot[slot];
-									loot.verase(slot);
+									loot.erase(loot.begin() + slot);
 									}
 
 								if(page*18>=loot.size()&&page!=0)page--;
@@ -11111,9 +11288,11 @@ void save(void)
 	char dummy_c;
 	int dummy;
 	DWORD numbytes;
-	HANDLE h=CreateFile("save.dat",GENERIC_READ|GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
-
-	if(h!=INVALID_HANDLE_VALUE)
+	HANDLE h;
+	int l;
+	
+	h=LCSCreateFile("save.dat", LCSIO_WRITE);
+	if(h!=NULL)
 		{
 		WriteFile(h,&version,sizeof(unsigned long),&numbytes,NULL);
 
@@ -11180,7 +11359,7 @@ void save(void)
 		//LOCATIONS
 		dummy=location.size();
 		WriteFile(h,&dummy,sizeof(int),&numbytes,NULL);
-		for(int l=0;l<location.size();l++)
+		for(l=0;l<location.size();l++)
 			{
 			dummy=location[l]->loot.size();
 			WriteFile(h,&dummy,sizeof(int),&numbytes,NULL);
@@ -11313,14 +11492,16 @@ char load(void)
 {
 	//LOAD FILE
 	unsigned long loadversion;
-
+    int l;
 	char dummy_c;
 	int dummy;
 	long dummy_l;
 	DWORD numbytes;
-	HANDLE h=CreateFile("save.dat",GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
-
-	if(h!=INVALID_HANDLE_VALUE)
+	HANDLE h;
+	
+	h=LCSCreateFile("save.dat", LCSIO_READ);
+		
+	if(h!=NULL)
 		{
 		ReadFile(h,&loadversion,sizeof(unsigned long),&numbytes,NULL);
 
@@ -11397,7 +11578,7 @@ char load(void)
 		//LOCATIONS
 		ReadFile(h,&dummy,sizeof(int),&numbytes,NULL);
 		location.resize(dummy);
-		for(int l=0;l<location.size();l++)
+		for(l=0;l<location.size();l++)
 			{
 			location[l]=new locationst;
 
@@ -11644,7 +11825,7 @@ char talk(creaturest &a,int t)
 					addstr("pretends to be a Secret Agent.");
 					break;
 				case SIEGE_HICKS:
-					switch(random(2))
+					switch(LCSrandom(2))
 						{
 						case 0:
 							addstr("pretends to be Mountain");
@@ -11692,14 +11873,14 @@ char talk(creaturest &a,int t)
 
 			do
 				{
-				an=random(noticer.size());
+				an=LCSrandom(noticer.size());
 				n=noticer[an];
-				noticer.verase(an);
+				noticer.erase(noticer.begin() + an);
 
 				int chance=encounter[n].attval(ATTRIBUTE_WISDOM)+
 					encounter[n].attval(ATTRIBUTE_INTELLIGENCE);
 
-				if(chance>(int)random(21)+disguise)
+				if(chance>(int)LCSrandom(21)+disguise)
 					{
 					noticed=1;
 					break;
@@ -11710,8 +11891,8 @@ char talk(creaturest &a,int t)
 			//NOW MUST BLUFF
 			if(!noticed)
 				{
-				short aroll=random(21)+a.attval(ATTRIBUTE_CHARISMA)+
-					a.attval(ATTRIBUTE_WISDOM)+random(a.skill[SKILL_PERSUASION]*2+1);
+				short aroll=LCSrandom(21)+a.attval(ATTRIBUTE_CHARISMA)+
+					a.attval(ATTRIBUTE_WISDOM)+LCSrandom(a.skill[SKILL_PERSUASION]*2+1);
 
 				int maxtroll=0,troll;
 				for(int e=0;e<ENCMAX;e++)
@@ -11729,7 +11910,7 @@ char talk(creaturest &a,int t)
 						}
 					}
 
-				maxtroll+=random(21);
+				maxtroll+=LCSrandom(21);
 				a.skill_ip[SKILL_PERSUASION]+=(maxtroll>>2)+1;
 
 				if(maxtroll>aroll)
@@ -11928,14 +12109,14 @@ char talk(creaturest &a,int t)
 
 					if(lw!=-1)
 						{
-						short aroll=random(21)+a.attval(ATTRIBUTE_CHARISMA)+
-							a.attval(ATTRIBUTE_HEART)+random(a.skill[SKILL_PERSUASION]*2+1);
+						short aroll=LCSrandom(21)+a.attval(ATTRIBUTE_CHARISMA)+
+							a.attval(ATTRIBUTE_HEART)+LCSrandom(a.skill[SKILL_PERSUASION]*2+1);
 						char badthing=0;
 						if(aroll<15)badthing=1;
 						if(a.armor.type==ARMOR_NONE)aroll-=30;
-						short troll=random(21)+tk->attval(ATTRIBUTE_CHARISMA)+
+						short troll=LCSrandom(21)+tk->attval(ATTRIBUTE_CHARISMA)+
 							tk->attval(ATTRIBUTE_WISDOM);
-						a.skill_ip[SKILL_PERSUASION]+=random(2)+1;
+						a.skill_ip[SKILL_PERSUASION]+=LCSrandom(2)+1;
 
 						clearcommandarea();clearmessagearea();clearmaparea();
 						set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -12249,7 +12430,7 @@ char talk(creaturest &a,int t)
 						int line;
 						if(law[LAW_FREESPEECH]==-2)
 							{
-							line=random(3);
+							line=LCSrandom(3);
 							switch(line)
 								{
 								case 0:addstr("\"[What church do you go to?]\"");break;
@@ -12259,7 +12440,7 @@ char talk(creaturest &a,int t)
 							}
 						else
 							{
-							line=random(44);
+							line=LCSrandom(44);
 						switch(line)
 							{
 //LIMIT         :-----------------------------------------------------------------------------:
@@ -12325,10 +12506,10 @@ case 43:addstr("\"You smell...  Let's go take a shower.\"");break;
 						refresh();
 						getch();
 
-						short aroll=random(21)+a.attval(ATTRIBUTE_CHARISMA)*2+random(a.skill[SKILL_PERSUASION]*2+1);
+						short aroll=LCSrandom(21)+a.attval(ATTRIBUTE_CHARISMA)*2+LCSrandom(a.skill[SKILL_PERSUASION]*2+1);
 						if(a.armor.type==ARMOR_NONE)aroll-=30;
-						short troll=random(21)+tk->attval(ATTRIBUTE_CHARISMA)+tk->attval(ATTRIBUTE_WISDOM);
-						a.skill_ip[SKILL_PERSUASION]+=random(2)+1;
+						short troll=LCSrandom(21)+tk->attval(ATTRIBUTE_CHARISMA)+tk->attval(ATTRIBUTE_WISDOM);
+						a.skill_ip[SKILL_PERSUASION]+=LCSrandom(2)+1;
 
 						if(aroll>troll)
 							{
@@ -12690,7 +12871,7 @@ void kidnapattempt(void)
 					{
 					delenc(t,0);
 
-					int time=20+random(10);
+					int time=20+LCSrandom(10);
 					if(time<1)time=1;
 					if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 					}
@@ -12758,10 +12939,10 @@ char kidnap(creaturest &a,creaturest &t,char &amateur)
 		amateur=1;
 
 		//BASIC ROLL
-		int aroll=random(15)+1+random(a.attval(ATTRIBUTE_AGILITY));
-		int droll=random(20)+1+random(t.attval(ATTRIBUTE_AGILITY));
+		int aroll=LCSrandom(15)+1+LCSrandom(a.attval(ATTRIBUTE_AGILITY));
+		int droll=LCSrandom(20)+1+LCSrandom(t.attval(ATTRIBUTE_AGILITY));
 
-		aroll+=random(a.skill[SKILL_HANDTOHAND]+1);
+		aroll+=LCSrandom(a.skill[SKILL_HANDTOHAND]+1);
 		a.skill_ip[SKILL_HANDTOHAND]+=droll;
 
 		clearmessagearea();
@@ -12903,7 +13084,7 @@ void firstname(char *str)
 {
 	strcpy(str,"");
 
-	switch(random(100))
+	switch(LCSrandom(100))
 		{
 		case 0:strcat(str,"Ryan");break;
 		case 1:strcat(str,"Sergio");break;
@@ -13012,7 +13193,7 @@ void lastname(char *str)
 {
 	strcpy(str,"");
 
-	switch(random(100))
+	switch(LCSrandom(100))
 		{
 		case 0:strcat(str,"King");break;
 		case 1:strcat(str,"Lewis");break;
@@ -13147,13 +13328,13 @@ void disguisecheck(void)
 
 		do
 			{
-			an=random(noticer.size());
+			an=LCSrandom(noticer.size());
 			n=noticer[an];
-			noticer.verase(an);
+			noticer.erase(noticer.begin() + an);
 
 			int chance=encounter[n].attval(ATTRIBUTE_WISDOM)+
 				encounter[n].attval(ATTRIBUTE_INTELLIGENCE);
-			if(chance>(int)random(21)+disguise)
+			if(chance>(int)LCSrandom(21)+disguise)
 				{
 				noticed=1;
 				break;
@@ -13172,7 +13353,7 @@ void disguisecheck(void)
 			{
 			addstr(" looks at the Squad suspiciously.");
 
-			int time=20+random(10)-encounter[n].attval(ATTRIBUTE_INTELLIGENCE)-encounter[n].attval(ATTRIBUTE_CHARISMA);
+			int time=20+LCSrandom(10)-encounter[n].attval(ATTRIBUTE_INTELLIGENCE)-encounter[n].attval(ATTRIBUTE_CHARISMA);
 			if(time<1)time=1;
 
 			if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
@@ -13214,12 +13395,12 @@ void noticecheck(int exclude)
 
 		do
 			{
-			an=random(noticer.size());
+			an=LCSrandom(noticer.size());
 			n=noticer[an];
-			noticer.verase(an);
+			noticer.erase(noticer.begin() + an);
 
 			int chance=encounter[n].attval(ATTRIBUTE_WISDOM)+encounter[n].attval(ATTRIBUTE_INTELLIGENCE);
-			if(chance>random(21))
+			if(chance>LCSrandom(21))
 				{
 				noticed=1;
 				break;
@@ -13273,6 +13454,7 @@ void getloot(char *str,int loot)
 
 void survey(creaturest *cr)
 {
+	int v;
 	int creatureskill=cr->skill[SKILL_COMPUTERS]+cr->attval(ATTRIBUTE_INTELLIGENCE);
 	int misschance=0,noise=2;
 	if(creatureskill<3){noise=15;misschance=(30-creatureskill)*3;}
@@ -13283,26 +13465,26 @@ void survey(creaturest *cr)
 
 	int survey[VIEWNUM];
 
-	for(int v=0;v<VIEWNUM;v++)
+	for(v=0;v<VIEWNUM;v++)
 		{
 		survey[v]=attitude[v];
 
 		//MAKE SURVEY ACCURATE IF DEBUGGING
 		#ifdef NDEBUG
-			survey[v]+=random(noise*2+1)-noise;
+			survey[v]+=LCSrandom(noise*2+1)-noise;
 
-			if(!random(20))
+			if(!LCSrandom(20))
 				{
-				survey[v]+=random(noise*2+1)-noise;
-				if(!random(20))
+				survey[v]+=LCSrandom(noise*2+1)-noise;
+				if(!LCSrandom(20))
 					{
-					survey[v]+=random(noise*2+1)-noise;
-					if(!random(20))
+					survey[v]+=LCSrandom(noise*2+1)-noise;
+					if(!LCSrandom(20))
 						{
-						survey[v]+=random(noise*2+1)-noise;
-						if(!random(20))
+						survey[v]+=LCSrandom(noise*2+1)-noise;
+						if(!LCSrandom(20))
 							{
-							survey[v]+=random(noise*2+1)-noise;
+							survey[v]+=LCSrandom(noise*2+1)-noise;
 							}
 						}
 					}
@@ -13313,7 +13495,7 @@ void survey(creaturest *cr)
 		if(survey[v]>100)survey[v]=100;
 
 		#ifdef NDEBUG
-			if(random(100)<misschance)survey[v]=-1;
+			if(LCSrandom(100)<misschance)survey[v]=-1;
 		#endif
 
 		if(v==VIEW_LIBERALCRIMESQUAD&&attitude[v]==0)survey[v]=0;
@@ -13416,7 +13598,7 @@ void special_lab_cosmetics_cagedanimals(void)
 
 			if(unlock(UNLOCK_CAGE,actual))
 				{
-				int time=20+random(10);
+				int time=20+LCSrandom(10);
 				if(time<1)time=1;
 				if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -13505,7 +13687,7 @@ void special_lab_genetic_cagedanimals(void)
 
 			if(unlock(UNLOCK_CAGE,actual))
 				{
-				int time=20+random(10);
+				int time=20+LCSrandom(10);
 				if(time<1)time=1;
 				if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -13513,7 +13695,7 @@ void special_lab_genetic_cagedanimals(void)
 				sitestory->crime.push_back(CRIME_FREE_BEASTS);
 				criminalizeparty(LAWFLAG_VANDALISM);
 
-				if(!random(2))
+				if(!LCSrandom(2))
 					{
 					clearmessagearea();
 
@@ -13521,7 +13703,7 @@ void special_lab_genetic_cagedanimals(void)
 					move(16,1);
 					addstr("Uh, maybe that idea was Conservative in retrospect...");
 
-					int numleft=random(6)+1;
+					int numleft=LCSrandom(6)+1;
 					for(int e=0;e<ENCMAX;e++)
 						{
 						if(!encounter[e].exists)
@@ -13589,7 +13771,7 @@ void special_policestation_lockup(void)
 
 			if(unlock(UNLOCK_DOOR,actual))
 				{
-				int numleft=random(8)+2;
+				int numleft=LCSrandom(8)+2;
 				for(int e=0;e<ENCMAX;e++)
 					{
 					if(!encounter[e].exists)
@@ -13600,7 +13782,7 @@ void special_policestation_lockup(void)
 					if(numleft==0)break;
 					}
 
-				int time=20+random(10);
+				int time=20+LCSrandom(10);
 				if(time<1)time=1;
 				if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -13652,7 +13834,7 @@ void special_courthouse_lockup(void)
 
 			if(unlock(UNLOCK_DOOR,actual))
 				{
-				int numleft=random(8)+2;
+				int numleft=LCSrandom(8)+2;
 				for(int e=0;e<ENCMAX;e++)
 					{
 					if(!encounter[e].exists)
@@ -13663,7 +13845,7 @@ void special_courthouse_lockup(void)
 					if(numleft==0)break;
 					}
 
-				int time=20+random(10);
+				int time=20+LCSrandom(10);
 				if(time<1)time=1;
 				if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -13694,6 +13876,7 @@ void special_courthouse_lockup(void)
 
 void special_courthouse_jury(void)
 {
+	int p;
 	if(sitealarm||sitealienate)
 		{
 		clearmessagearea();
@@ -13732,7 +13915,7 @@ void special_courthouse_jury(void)
 
 			int maxattack=0;
 
-			for(int p=0;p<6;p++)
+			for(p=0;p<6;p++)
 				{
 				if(activesquad->squad[p]!=NULL)
 					{
@@ -13773,12 +13956,12 @@ void special_courthouse_jury(void)
 
 			if(goodp.size()>0)
 				{
-				p=goodp[random(goodp.size())];
+				int p=goodp[LCSrandom(goodp.size())];
 
-				short aroll=random(21)+activesquad->squad[p]->attval(ATTRIBUTE_CHARISMA)+
-					activesquad->squad[p]->attval(ATTRIBUTE_HEART)+random(activesquad->squad[p]->skill[SKILL_PERSUASION]+1)+
-					random(activesquad->squad[p]->skill[SKILL_LAW]+1)*2;
-				short troll=random(21)+20;
+				short aroll=LCSrandom(21)+activesquad->squad[p]->attval(ATTRIBUTE_CHARISMA)+
+					activesquad->squad[p]->attval(ATTRIBUTE_HEART)+LCSrandom(activesquad->squad[p]->skill[SKILL_PERSUASION]+1)+
+					LCSrandom(activesquad->squad[p]->skill[SKILL_LAW]+1)*2;
+				short troll=LCSrandom(21)+20;
 				activesquad->squad[p]->skill_ip[SKILL_PERSUASION]+=troll;
 				activesquad->squad[p]->skill_ip[SKILL_LAW]+=troll;
 
@@ -13794,7 +13977,7 @@ void special_courthouse_jury(void)
 					addstr(" works the room like Twelve Angry Men, and the jury");
 					move(17,1);
 					addstr("concludes that the ");
-					switch(random(10))
+					switch(LCSrandom(10))
 						{
 						case 0:addstr("murder");break;
 						case 1:addstr("assault");break;
@@ -13882,7 +14065,7 @@ void special_prison_control(void)
 
 		if(c=='y')
 			{
-			int numleft=random(8)+2;
+			int numleft=LCSrandom(8)+2;
 			for(int e=0;e<ENCMAX;e++)
 				{
 				if(!encounter[e].exists)
@@ -13893,7 +14076,7 @@ void special_prison_control(void)
 				if(numleft==0)break;
 				}
 
-			int time=20+random(10);
+			int time=20+LCSrandom(10);
 			if(time<1)time=1;
 			if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -13973,7 +14156,7 @@ void special_intel_supercomputer(void)
 
 			if(actual)
 				{
-				int time=20+random(10);
+				int time=20+LCSrandom(10);
 				if(time<1)time=1;
 				if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -14012,7 +14195,7 @@ void special_sweatshop_equipment(void)
 
 		if(c=='y')
 			{
-			int time=20+random(10);
+			int time=20+LCSrandom(10);
 			if(time<1)time=1;
 			if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 			
@@ -14050,7 +14233,7 @@ void special_polluter_equipment(void)
 
 		if(c=='y')
 			{
-			int time=20+random(10);
+			int time=20+LCSrandom(10);
 			if(time<1)time=1;
 			if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -14105,7 +14288,7 @@ void special_house_photos(void)
 					it->loottype=LOOT_CEOPHOTOS;
 				activesquad->loot.push_back(it);
 
-				int time=20+random(10);
+				int time=20+LCSrandom(10);
 				if(time<1)time=1;
 				if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -14165,7 +14348,7 @@ void special_corporate_files(void)
 					it->loottype=LOOT_CORPFILES;
 				activesquad->loot.push_back(it);
 
-				int time=20+random(10);
+				int time=20+LCSrandom(10);
 				if(time<1)time=1;
 				if(sitealarmtimer>time||sitealarmtimer==-1)sitealarmtimer=time;
 
@@ -14308,6 +14491,7 @@ void clearcommandarea(void)
 
 char unlock(short type,char &actual)
 {
+	int p;
 	int difficulty=0;
 
 	switch(type)
@@ -14319,7 +14503,7 @@ char unlock(short type,char &actual)
 
 	int maxattack=0;
 
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)
 			{
@@ -14354,9 +14538,9 @@ char unlock(short type,char &actual)
 
 	if(goodp.size()>0)
 		{
-		int p=goodp[random(goodp.size())];
+		int p=goodp[LCSrandom(goodp.size())];
 
-		int aroll=random(11)+maxattack;
+		int aroll=LCSrandom(11)+maxattack;
 		activesquad->squad[p]->skill_ip[SKILL_SECURITY]+=difficulty;
 
 		if(aroll>difficulty)
@@ -14411,6 +14595,7 @@ char bash(short type,char &actual)
 {
 	int difficulty=0;
 	char crowable=0;
+	int p = 0;
 
 	switch(type)
 		{
@@ -14424,7 +14609,7 @@ char bash(short type,char &actual)
 
 	int maxattack=0;
 
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)
 			{
@@ -14459,9 +14644,9 @@ char bash(short type,char &actual)
 
 	if(goodp.size()>0)
 		{
-		int p=goodp[random(goodp.size())];
+		int p=goodp[LCSrandom(goodp.size())];
 
-		int aroll=random(11)+maxattack;
+		int aroll=LCSrandom(11)+maxattack;
 
 		if(aroll>difficulty||crowable)
 			{
@@ -14521,6 +14706,7 @@ char bash(short type,char &actual)
 char hack(short type,char &actual)
 {
 	int difficulty=0;
+	int p;
 
 	switch(type)
 		{
@@ -14530,7 +14716,7 @@ char hack(short type,char &actual)
 	int maxattack=0;
 	char blind=0;
 
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)
 			{
@@ -14583,9 +14769,9 @@ char hack(short type,char &actual)
 
 	if(goodp.size()>0)
 		{
-		int p=goodp[random(goodp.size())];
+		int p=goodp[LCSrandom(goodp.size())];
 
-		int aroll=random(11)+maxattack;
+		int aroll=LCSrandom(11)+maxattack;
 		activesquad->squad[p]->skill_ip[SKILL_COMPUTERS]+=difficulty;
 
 		if(aroll>difficulty)
@@ -15192,7 +15378,7 @@ char liberalagenda(char won)
 		{
 		y=0;
 
-		for(c=0;c<9;c++)
+		for(int c=0;c<9;c++)
 			{
 			if(court[c]==-2)set_color(COLOR_RED,COLOR_BLACK,1);
 			else if(court[c]==-1)set_color(COLOR_MAGENTA,COLOR_BLACK,1);
@@ -15311,7 +15497,7 @@ char radio_broadcast(void)
 	move(16,1);
 	addstr("The Squad takes control of the microphone and");
 	move(17,1);
-	int viewhit=random(VIEWNUM);
+	int viewhit=LCSrandom(VIEWNUM);
 	switch(viewhit)
 		{
 		case VIEW_ABORTION:addstr("discusses abortion.");break;
@@ -15342,15 +15528,17 @@ char radio_broadcast(void)
 	int segmentpower=0;
 	int usegmentpower;
 	int partysize=0;
-	for(int p=0;p<6;p++)
+	int p = 0;
+
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)
 			{
 			if(!activesquad->squad[p]->alive)continue;
 
-			segmentpower+=random(activesquad->squad[p]->attval(ATTRIBUTE_INTELLIGENCE));
+			segmentpower+=LCSrandom(activesquad->squad[p]->attval(ATTRIBUTE_INTELLIGENCE));
 			segmentpower+=activesquad->squad[p]->attval(ATTRIBUTE_HEART);
-			segmentpower+=random(activesquad->squad[p]->attval(ATTRIBUTE_CHARISMA));
+			segmentpower+=LCSrandom(activesquad->squad[p]->attval(ATTRIBUTE_CHARISMA));
 			segmentpower+=activesquad->squad[p]->skill[SKILL_PERSUASION];
 			activesquad->squad[p]->skill_ip[SKILL_PERSUASION]+=50;
 			partysize++;
@@ -15390,7 +15578,7 @@ char radio_broadcast(void)
 				{
 				if(activesquad->squad[p]->prisoner->type==CREATURE_RADIOPERSONALITY)
 					{
-					viewhit=random(VIEWNUM);
+					viewhit=LCSrandom(VIEWNUM);
 					clearmessagearea();
 
 					set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -15424,9 +15612,9 @@ char radio_broadcast(void)
 						}
 
 					usegmentpower=10; //FAME BONUS
-					usegmentpower+=random(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_INTELLIGENCE));
+					usegmentpower+=LCSrandom(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_INTELLIGENCE));
 					usegmentpower+=activesquad->squad[p]->prisoner->attval(ATTRIBUTE_HEART);
-					usegmentpower+=random(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_CHARISMA));
+					usegmentpower+=LCSrandom(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_CHARISMA));
 					usegmentpower+=activesquad->squad[p]->prisoner->skill[SKILL_PERSUASION];
 
 					if(viewhit!=VIEW_LIBERALCRIMESQUAD)change_public_opinion(viewhit,(usegmentpower-10)/2,1,0);
@@ -15483,7 +15671,7 @@ char radio_broadcast(void)
 		refresh();
 		getch();
 
-		int numleft=random(8)+2;
+		int numleft=LCSrandom(8)+2;
 		for(int e=0;e<ENCMAX;e++)
 			{
 			if(!encounter[e].exists)
@@ -15514,6 +15702,7 @@ char radio_broadcast(void)
 char news_broadcast(void)
 {
 	sitealarm=1;
+	int p;
 
 	int enemy=0;
 	for(int e=0;e<ENCMAX;e++)
@@ -15545,7 +15734,7 @@ char news_broadcast(void)
 	move(16,1);
 	addstr("The Squad steps in front of the cameras and");
 	move(17,1);
-	int viewhit=random(VIEWNUM);
+	int viewhit=LCSrandom(VIEWNUM);
 	switch(viewhit)
 		{
 		case VIEW_ABORTION:addstr("discusses abortion.");break;
@@ -15576,15 +15765,15 @@ char news_broadcast(void)
 	int segmentpower=0;
 	int usegmentpower;
 	int partysize=0;
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)
 			{
 			if(!activesquad->squad[p]->alive)continue;
 
-			segmentpower+=random(activesquad->squad[p]->attval(ATTRIBUTE_INTELLIGENCE));
+			segmentpower+=LCSrandom(activesquad->squad[p]->attval(ATTRIBUTE_INTELLIGENCE));
 			segmentpower+=activesquad->squad[p]->attval(ATTRIBUTE_HEART);
-			segmentpower+=random(activesquad->squad[p]->attval(ATTRIBUTE_CHARISMA));
+			segmentpower+=LCSrandom(activesquad->squad[p]->attval(ATTRIBUTE_CHARISMA));
 			segmentpower+=activesquad->squad[p]->skill[SKILL_PERSUASION];
 			activesquad->squad[p]->skill_ip[SKILL_PERSUASION]+=50;
 			partysize++;
@@ -15624,7 +15813,7 @@ char news_broadcast(void)
 				{
 				if(activesquad->squad[p]->prisoner->type==CREATURE_NEWSANCHOR)
 					{
-					viewhit=random(VIEWNUM);
+					viewhit=LCSrandom(VIEWNUM);
 					clearmessagearea();
 
 					set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -15658,9 +15847,9 @@ char news_broadcast(void)
 						}
 
 					usegmentpower=10; //FAME BONUS
-					usegmentpower+=random(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_INTELLIGENCE));
+					usegmentpower+=LCSrandom(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_INTELLIGENCE));
 					usegmentpower+=activesquad->squad[p]->prisoner->attval(ATTRIBUTE_HEART);
-					usegmentpower+=random(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_CHARISMA));
+					usegmentpower+=LCSrandom(activesquad->squad[p]->prisoner->attval(ATTRIBUTE_CHARISMA));
 					usegmentpower+=activesquad->squad[p]->prisoner->skill[SKILL_PERSUASION];
 
 					if(viewhit!=VIEW_LIBERALCRIMESQUAD)change_public_opinion(viewhit,(usegmentpower-10)/2,1,0);
@@ -15717,7 +15906,7 @@ char news_broadcast(void)
 		refresh();
 		getch();
 
-		int numleft=random(8)+2;
+		int numleft=LCSrandom(8)+2;
 		for(int e=0;e<ENCMAX;e++)
 			{
 			if(!encounter[e].exists)
@@ -15794,6 +15983,7 @@ void passmonth(char &clearformess,char canseethings)
 {
 	short oldlaw[LAWNUM];
 	memmove(oldlaw,law,sizeof(short)*LAWNUM);
+	int l, v, p;
 
 	//TIME ADVANCE
 	day=1;
@@ -15805,7 +15995,7 @@ void passmonth(char &clearformess,char canseethings)
 		}
 
 	//CLEAR RENT EXEMPTIONS
-	for(int l=0;l<location.size();l++)location[l]->newrental=0;
+	for(l=0;l<location.size();l++)location[l]->newrental=0;
 
 	//YOUR PAPER AND PUBLIC OPINION AND STUFF
 	vector<int> nploc;
@@ -15821,7 +16011,7 @@ void passmonth(char &clearformess,char canseethings)
 
 		//CRIMINALIZE THE PRINTERS
 		long writingpower=0;
-		for(l=0;l<nploc.size();l++)
+		for(int l=0;l<nploc.size();l++)
 			{
 			criminalizepool(LAWFLAG_SPEECH,-1,0,nploc[l]);
 			for(int p=0;p<pool.size();p++)
@@ -15830,13 +16020,13 @@ void passmonth(char &clearformess,char canseethings)
 					pool[p]->alive&&
 					pool[p]->align==1)
 					{
-					writingpower+=random(pool[p]->skill[SKILL_PERSUASION]+
+					writingpower+=LCSrandom(pool[p]->skill[SKILL_PERSUASION]+
 						pool[p]->skill[SKILL_WRITING]*3+
 						pool[p]->attval(ATTRIBUTE_INTELLIGENCE)+
 						pool[p]->attval(ATTRIBUTE_CHARISMA)+
 						pool[p]->attval(ATTRIBUTE_HEART)*2+1);
-					pool[p]->skill_ip[SKILL_WRITING]+=random(2)+1;
-					pool[p]->skill_ip[SKILL_PERSUASION]+=random(2)+1;
+					pool[p]->skill_ip[SKILL_WRITING]+=LCSrandom(2)+1;
+					pool[p]->skill_ip[SKILL_PERSUASION]+=LCSrandom(2)+1;
 					}
 				}
 			}
@@ -15846,16 +16036,16 @@ void passmonth(char &clearformess,char canseethings)
 		for(int v=0;v<VIEWNUM;v++)
 			{
 			val=newspaper_topicwork[v];
-			if(random(100)<writingpower)val++;
-			if(random(100)<writingpower)val++;
-			if(random(100)<writingpower)val++;
-			if(random(1000)<writingpower)val++;
-			if(random(1000)<writingpower)val++;
-			if(random(1000)<writingpower)val++;
-			if(random(10000)<writingpower)val++;
-			if(random(10000)<writingpower)val++;
-			if(random(10000)<writingpower)val++;
-			if(random(10000)<writingpower)val++;
+			if(LCSrandom(100)<writingpower)val++;
+			if(LCSrandom(100)<writingpower)val++;
+			if(LCSrandom(100)<writingpower)val++;
+			if(LCSrandom(1000)<writingpower)val++;
+			if(LCSrandom(1000)<writingpower)val++;
+			if(LCSrandom(1000)<writingpower)val++;
+			if(LCSrandom(10000)<writingpower)val++;
+			if(LCSrandom(10000)<writingpower)val++;
+			if(LCSrandom(10000)<writingpower)val++;
+			if(LCSrandom(10000)<writingpower)val++;
 			if(val>newspaper_topicwork[v])val=newspaper_topicwork[v];
 			vpower=power*val;
 			if(vpower>0)
@@ -15896,7 +16086,7 @@ void passmonth(char &clearformess,char canseethings)
 			if(loottype==LOOT_INTHQDISK||
 				loottype==LOOT_SECRETDOCUMENTS)
 				{
-				for(l=0;l<nploc.size();l++)
+				for(int l=0;l<nploc.size();l++)
 					{
 					criminalizepool(LAWFLAG_TREASON,-1,0,nploc[l]);
 					}
@@ -15905,7 +16095,7 @@ void passmonth(char &clearformess,char canseethings)
 		}
 
 	//STORIES STALE EVEN IF NOT PRINTED
-	for(int v=0;v<VIEWNUM;v++)newspaper_topicwork[v]=0;
+	for(v=0;v<VIEWNUM;v++)newspaper_topicwork[v]=0;
 
 	//HAVING SLEEPERS
 	for(int pl=0;pl<pool.size();pl++)
@@ -15921,18 +16111,18 @@ void passmonth(char &clearformess,char canseethings)
 		{
 		if(v==VIEW_LIBERALCRIMESQUADPOS)continue;
 		if(v==VIEW_LIBERALCRIMESQUAD)continue;
-		if(!random(3)&&v!=VIEW_AMRADIO&&v!=VIEW_CABLENEWS)
+		if(!LCSrandom(3)&&v!=VIEW_AMRADIO&&v!=VIEW_CABLENEWS)
 			{
 			//DRIFTS DOWN DEPENDING ON AM RADIO AND CABLE NEWS
 			int conspower=200-attitude[VIEW_AMRADIO]-attitude[VIEW_CABLENEWS];
 
-			if(random(200)>conspower)change_public_opinion(v,random(2)*2-1,0);
+			if(LCSrandom(200)>conspower)change_public_opinion(v,LCSrandom(2)*2-1,0);
 			else change_public_opinion(v,-1,0);
 			}
 
 		if(v==VIEW_AMRADIO||v==VIEW_CABLENEWS)
 			{
-			if(!random(3))change_public_opinion(v,-1,0);
+			if(!LCSrandom(3))change_public_opinion(v,-1,0);
 			}
 		}
 
@@ -16000,7 +16190,7 @@ void passmonth(char &clearformess,char canseethings)
 	updateworld_laws(law,oldlaw);
 
 	//THE SYSTEM!
-	for(int p=pool.size()-1;p>=0;p--)
+	for(p=pool.size()-1;p>=0;p--)
 		{
 		if(disbanding)break;
 
@@ -16031,7 +16221,7 @@ void passmonth(char &clearformess,char canseethings)
 
 				removesquadinfo(*pool[p]);
 				delete pool[p];
-				pool.verase(p);
+				pool.erase(pool.begin() + p);
 				continue;
 				}
 			else
@@ -16043,7 +16233,7 @@ void passmonth(char &clearformess,char canseethings)
 				if(law[LAW_POLICEBEHAVIOR]==1)copstrength=75;
 				if(law[LAW_POLICEBEHAVIOR]==2)copstrength=50;
 
-				if(random(copstrength)>pool[p]->juice+pool[p]->attval(ATTRIBUTE_HEART,0)*5&&pool[p]->hireid!=-1)
+				if(LCSrandom(copstrength)>pool[p]->juice+pool[p]->attval(ATTRIBUTE_HEART,0)*5&&pool[p]->hireid!=-1)
 					{
 					if(pool[p]->hireid!=-1)
 						{
@@ -16073,7 +16263,7 @@ void passmonth(char &clearformess,char canseethings)
 
 					removesquadinfo(*pool[p]);
 					delete pool[p];
-					pool.verase(p);
+					pool.erase(pool.begin() + p);
 					continue;
 					}
 				else
@@ -16117,7 +16307,7 @@ void passmonth(char &clearformess,char canseethings)
 			{
 			removesquadinfo(*pool[p]);
 			delete pool[p];
-			pool.verase(p);
+			pool.erase(pool.begin() + p);
 			}
 		}
 
@@ -16152,7 +16342,7 @@ void passmonth(char &clearformess,char canseethings)
 			if(pool[p]->special[SPECIALWOUND_RIGHTLUNG]!=1)
 				{
 				pool[p]->special[SPECIALWOUND_RIGHTLUNG]=1;
-				if(random(2))
+				if(LCSrandom(2))
 					{
 					pool[p]->att[ATTRIBUTE_HEALTH]--;
 					if(pool[p]->att[ATTRIBUTE_HEALTH]<=0)
@@ -16164,7 +16354,7 @@ void passmonth(char &clearformess,char canseethings)
 			if(pool[p]->special[SPECIALWOUND_LEFTLUNG]!=1)
 				{
 				pool[p]->special[SPECIALWOUND_LEFTLUNG]=1;
-				if(random(2))
+				if(LCSrandom(2))
 					{
 					pool[p]->att[ATTRIBUTE_HEALTH]--;
 					if(pool[p]->att[ATTRIBUTE_HEALTH]<=0)
@@ -16176,7 +16366,7 @@ void passmonth(char &clearformess,char canseethings)
 			if(pool[p]->special[SPECIALWOUND_HEART]!=1)
 				{
 				pool[p]->special[SPECIALWOUND_HEART]=1;
-				if(random(3))
+				if(LCSrandom(3))
 					{
 					pool[p]->att[ATTRIBUTE_HEALTH]--;
 					if(pool[p]->att[ATTRIBUTE_HEALTH]<=0)
@@ -16253,6 +16443,7 @@ void passmonth(char &clearformess,char canseethings)
 void elections(char clearformess,char canseethings)
 {
 	char num[20];
+	int l, p, c;
 
 	if(canseethings)
 		{
@@ -16292,7 +16483,7 @@ void elections(char clearformess,char canseethings)
 		char candidate[5][80];
 		int votes[5]={0,0,0,0,0};
 		int oldwinnerspot=-1;
-		for(int c=0;c<5;c++)
+		for(c=0;c<5;c++)
 			{
 			if(c==0)set_color(COLOR_RED,COLOR_BLACK,1);
 			else if(c==1)set_color(COLOR_MAGENTA,COLOR_BLACK,1);
@@ -16335,10 +16526,10 @@ void elections(char clearformess,char canseethings)
 			{
 			vote=0;
 
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
 
 			votes[vote]++;
 
@@ -16346,7 +16537,7 @@ void elections(char clearformess,char canseethings)
 				{
 				int maxvote=0;
 
-				for(int c=0;c<5;c++)
+				for(c=0;c<5;c++)
 					{
 					if(votes[c]>maxvote)maxvote=votes[c];
 					}
@@ -16363,7 +16554,7 @@ void elections(char clearformess,char canseethings)
 
 				if(eligible.size()>1)
 					{
-					winner=eligible[random(eligible.size())];
+					winner=eligible[LCSrandom(eligible.size())];
 					recount=1;
 					}
 				else winner=eligible[0];
@@ -16385,9 +16576,7 @@ void elections(char clearformess,char canseethings)
 
 				refresh();
 
-				unsigned long time=GetTickCount();
-				while(time+50>GetTickCount()&&time<=GetTickCount());
-
+				pause_ms(50);
 				getch();
 				}
 			}
@@ -16422,7 +16611,7 @@ void elections(char clearformess,char canseethings)
 				if(e==EXEC_PRESIDENT)continue;
 				if(winner-2==-2)exec[e]=-2;
 				else if(winner-2==2)exec[e]=2;
-				else exec[e]=winner+random(3)-3;
+				else exec[e]=winner+LCSrandom(3)-3;
 				name(execname[e]);
 				}
 			}
@@ -16457,9 +16646,9 @@ void elections(char clearformess,char canseethings)
 			addstr(num);
 			}
 
-		int x=0,y=2;
+		int x=0,y=2, s=0;
 
-		for(int s=0;s<100;s++)
+		for(s=0;s<100;s++)
 			{
 			if(s%3!=senmod)continue;
 
@@ -16525,10 +16714,10 @@ void elections(char clearformess,char canseethings)
 
 			vote=0;
 
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
 
 			senate[s]=vote-2;
 
@@ -16573,9 +16762,7 @@ void elections(char clearformess,char canseethings)
 			if(canseethings)
 				{
 				refresh();
-
-				unsigned long time=GetTickCount();
-				while(time+50>GetTickCount()&&time<=GetTickCount());
+				pause_ms(50);
 
 				getch();
 				}
@@ -16609,9 +16796,9 @@ void elections(char clearformess,char canseethings)
 			addstr(num);
 			}
 
-		int x=0,y=2;
+		int x=0,y=2, h=0;
 
-		for(int h=0;h<435;h++)
+		for(h=0;h<435;h++)
 			{
 			if(canseethings)
 				{
@@ -16673,10 +16860,10 @@ void elections(char clearformess,char canseethings)
 			{
 			vote=0;
 
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
 
 			house[h]=vote-2;
 
@@ -16722,8 +16909,7 @@ void elections(char clearformess,char canseethings)
 				{
 				refresh();
 
-				unsigned long time=GetTickCount();
-				while(time+10>GetTickCount()&&time<=GetTickCount());
+				pause_ms(10);
 
 				getch();
 				}
@@ -16757,7 +16943,7 @@ void elections(char clearformess,char canseethings)
 
 	vector<int> prop;
 	vector<int> propdir;
-	int pnum=random(5)+2;
+	int pnum=LCSrandom(5)+2;
 	char lawtaken[LAWNUM];
 	memset(lawtaken,0,LAWNUM*sizeof(char));
 
@@ -16767,14 +16953,14 @@ void elections(char clearformess,char canseethings)
 	memset(lawdir,0,LAWNUM*sizeof(char));
 	//DETERMINE PROPS
 	int pmood,pvote;
-	for(int l=0;l<LAWNUM;l++)
+	for(l=0;l<LAWNUM;l++)
 		{
 		pmood=publicmood(l);
 		pvote=0;
-		if(random(100)<pmood)pvote++;
-		if(random(100)<pmood)pvote++;
-		if(random(100)<pmood)pvote++;
-		if(random(100)<pmood)pvote++;
+		if(LCSrandom(100)<pmood)pvote++;
+		if(LCSrandom(100)<pmood)pvote++;
+		if(LCSrandom(100)<pmood)pvote++;
+		if(LCSrandom(100)<pmood)pvote++;
 		pvote-=2;
 
 		if(law[l]<pvote)lawdir[l]=1;
@@ -16789,17 +16975,17 @@ void elections(char clearformess,char canseethings)
 		else if(law[l]==1)pvote=75;
 		else pvote=100;
 
-		lawpriority[l]=abs(pvote-pmood)+random(10);
+		lawpriority[l]=abs(pvote-pmood)+LCSrandom(10);
 		}
 
 	vector<int> canlaw;
 
 	prop.resize(pnum);
 	propdir.resize(pnum);
-	for(int p=0;p<pnum;p++)
+	for(p=0;p<pnum;p++)
 		{
 		int maxprior=0;
-		for(int l=0;l<LAWNUM;l++)
+		for(l=0;l<LAWNUM;l++)
 			{
 			if(lawpriority[l]>maxprior&&!lawtaken[l])maxprior=lawpriority[l];
 			}
@@ -16812,7 +16998,7 @@ void elections(char clearformess,char canseethings)
 				}
 			}
 
-		prop[p]=canlaw[random(canlaw.size())];
+		prop[p]=canlaw[LCSrandom(canlaw.size())];
 
 		lawtaken[prop[p]]=1;
 
@@ -16824,12 +17010,12 @@ void elections(char clearformess,char canseethings)
 			int propnum;
 			switch(p)
 				{
-				case 0:propnum=2*(17-random(2)*6)*(19-random(2)*6);break;
-				case 1:propnum=7*(17-random(2)*6)*(19-random(2)*6);break;
-				case 2:propnum=3*(17-random(2)*6)*(19-random(2)*6);break;
-				case 3:propnum=5*(17-random(2)*6)*(2-random(2)*1);break;
-				case 4:propnum=11*(17-random(2)*6)*(2-random(2)*1);break;
-				case 5:propnum=13*(17-random(2)*6)*(2-random(2)*1);break;
+				case 0:propnum=2*(17-LCSrandom(2)*6)*(19-LCSrandom(2)*6);break;
+				case 1:propnum=7*(17-LCSrandom(2)*6)*(19-LCSrandom(2)*6);break;
+				case 2:propnum=3*(17-LCSrandom(2)*6)*(19-LCSrandom(2)*6);break;
+				case 3:propnum=5*(17-LCSrandom(2)*6)*(2-LCSrandom(2)*1);break;
+				case 4:propnum=11*(17-LCSrandom(2)*6)*(2-LCSrandom(2)*1);break;
+				case 5:propnum=13*(17-LCSrandom(2)*6)*(2-LCSrandom(2)*1);break;
 				}
 			itoa(propnum,num,10);
 			addstr("Proposition ");addstr(num);addstr(":");
@@ -16917,10 +17103,10 @@ void elections(char clearformess,char canseethings)
 		for(int l=0;l<100;l++)
 			{
 			vote=0;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
-			if(random(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
+			if(LCSrandom(100)<mood)vote++;
 			vote-=2;
 
 			if(law[prop[p]]>vote && propdir[p]==-1)yesvotes++;
@@ -16931,7 +17117,7 @@ void elections(char clearformess,char canseethings)
 				if(yesvotes>50)yeswin=1;
 				else if(yesvotes==50)
 					{
-					if(!random(2))yeswin=1;
+					if(!LCSrandom(2))yeswin=1;
 					recount=1;
 					}
 				}
@@ -16956,9 +17142,7 @@ void elections(char clearformess,char canseethings)
 
 				refresh();
 
-				unsigned long time=GetTickCount();
-				while(time+20>GetTickCount()&&time<=GetTickCount());
-
+				pause_ms(20);
 				getch();
 				}
 			}
@@ -16991,6 +17175,7 @@ void elections(char clearformess,char canseethings)
 
 void supremecourt(char clearformess,char canseethings)
 {
+	int c;
 	if(canseethings)
 		{
 		if(clearformess)
@@ -17025,17 +17210,17 @@ void supremecourt(char clearformess,char canseethings)
 
 	vector<int> scase;
 	vector<int> scasedir;
-	int cnum=random(5)+2;
+	int cnum=LCSrandom(5)+2;
 	char lawtaken[LAWNUM];
 	memset(lawtaken,0,LAWNUM*sizeof(char));
 
 	scase.resize(cnum);
 	scasedir.resize(cnum);
-	for(int c=0;c<cnum;c++)
+	for(c=0;c<cnum;c++)
 		{
 		do
 			{
-			scase[c]=random(LAWNUM);
+			scase[c]=LCSrandom(LAWNUM);
 			}while(lawtaken[scase[c]]);
 
 		lawtaken[scase[c]]=1;
@@ -17044,7 +17229,7 @@ void supremecourt(char clearformess,char canseethings)
 		else if(law[scase[c]]==-2)scasedir[c]=1;
 		else
 			{
-			if(!random(2))scasedir[c]=1;
+			if(!LCSrandom(2))scasedir[c]=1;
 			else scasedir[c]=-1;
 			}
 
@@ -17053,7 +17238,7 @@ void supremecourt(char clearformess,char canseethings)
 			move(c*3+2,0);
 			char name1[80];
 			char name2[80];
-			if(!random(3))strcpy(name1,"The People");
+			if(!LCSrandom(3))strcpy(name1,"The People");
 			else lastname(name1);
 			addstr(name1);
 			addstr(" vs. ");
@@ -17144,7 +17329,7 @@ void supremecourt(char clearformess,char canseethings)
 		for(int l=0;l<9;l++)
 			{
 			vote=court[l];
-			if(vote>=-1&&vote<=1)vote+=random(3)-1;
+			if(vote>=-1&&vote<=1)vote+=LCSrandom(3)-1;
 
 			if(law[scase[c]]>vote && scasedir[c]==-1)yesvotes++;
 			if(law[scase[c]]<vote && scasedir[c]==1)yesvotes++;
@@ -17174,8 +17359,7 @@ void supremecourt(char clearformess,char canseethings)
 
 				refresh();
 
-				unsigned long time=GetTickCount();
-				while(time+120>GetTickCount()&&time<=GetTickCount());
+				pause_ms(120);
 
 				getch();
 				}
@@ -17197,7 +17381,7 @@ void supremecourt(char clearformess,char canseethings)
 		}
 
 	//CHANGE A JUSTICE 40% OF THE TIME
-	if(random(10)>=6)
+	if(LCSrandom(10)>=6)
 		{
 		if(canseethings)
 			{
@@ -17209,7 +17393,7 @@ void supremecourt(char clearformess,char canseethings)
 			addstr("Changing the Guard!");
 			}
 
-		int j=random(9);
+		int j=LCSrandom(9);
 
 		if(canseethings)
 			{
@@ -17280,6 +17464,7 @@ void supremecourt(char clearformess,char canseethings)
 
 void congress(char clearformess,char canseethings)
 {
+	int l, c;
 	if(canseethings)
 		{
 		if(clearformess)
@@ -17315,7 +17500,7 @@ void congress(char clearformess,char canseethings)
 	vector<int> bill;
 	vector<int> billdir;
 	vector<int> killbill;
-	int cnum=random(5)+2;
+	int cnum=LCSrandom(5)+2;
 	char lawtaken[LAWNUM];
 	memset(lawtaken,0,LAWNUM*sizeof(char));
 
@@ -17326,13 +17511,13 @@ void congress(char clearformess,char canseethings)
 
 	//DETERMINE BILLS
 	int pup,pdown,pprior;
-	for(int l=0;l<LAWNUM;l++)
+	for(l=0;l<LAWNUM;l++)
 		{
 		pup=0;
 		pdown=0;
 		pprior=0;
 
-		if(!random(3))
+		if(!LCSrandom(3))
 			{
 			for(int cl=0;cl<435;cl++)
 				{
@@ -17341,7 +17526,7 @@ void congress(char clearformess,char canseethings)
 				pprior+=abs(house[cl]-law[l]);
 				}
 			}
-		else if(random(2))
+		else if(LCSrandom(2))
 			{
 			for(int sl=0;sl<100;sl++)
 				{
@@ -17367,7 +17552,7 @@ void congress(char clearformess,char canseethings)
 			}
 
 		if(pup>pdown)lawdir[l]=1;
-		else if(pup==pdown)lawdir[l]=random(2)*2-1;
+		else if(pup==pdown)lawdir[l]=LCSrandom(2)*2-1;
 		else lawdir[l]=-1;
 		if(law[l]==-2)lawdir[l]=1;
 		if(law[l]==2)lawdir[l]=-1;
@@ -17381,12 +17566,12 @@ void congress(char clearformess,char canseethings)
 	bill.resize(cnum);
 	billdir.resize(cnum);
 	killbill.resize(cnum);
-	for(int c=0;c<cnum;c++)
+	for(c=0;c<cnum;c++)
 		{
 		killbill[c]=0;
 
 		int maxprior=0;
-		for(int l=0;l<LAWNUM;l++)
+		for(l=0;l<LAWNUM;l++)
 			{
 			if(lawpriority[l]>maxprior&&!lawtaken[l])maxprior=lawpriority[l];
 			}
@@ -17399,7 +17584,7 @@ void congress(char clearformess,char canseethings)
 				}
 			}
 
-		bill[c]=canlaw[random(canlaw.size())];
+		bill[c]=canlaw[LCSrandom(canlaw.size())];
 
 		lawtaken[bill[c]]=1;
 
@@ -17508,7 +17693,7 @@ void congress(char clearformess,char canseethings)
 		for(int l=0;l<435;l++)
 			{
 			vote=house[l];
-			if(vote>=-1&&vote<=1)vote+=random(3)-1;
+			if(vote>=-1&&vote<=1)vote+=LCSrandom(3)-1;
 
 			if(law[bill[c]]>vote && billdir[c]==-1)yesvotes_h++;
 			if(law[bill[c]]<vote && billdir[c]==1)yesvotes_h++;
@@ -17542,7 +17727,7 @@ void congress(char clearformess,char canseethings)
 				s++;
 
 				vote=senate[s];
-				if(vote>=-1&&vote<=1)vote+=random(3)-1;
+				if(vote>=-1&&vote<=1)vote+=LCSrandom(3)-1;
 
 				if(law[bill[c]]>vote && billdir[c]==-1)yesvotes_s++;
 				if(law[bill[c]]<vote && billdir[c]==1)yesvotes_s++;
@@ -17557,7 +17742,7 @@ void congress(char clearformess,char canseethings)
 					int vote=(exec[EXEC_PRESIDENT]+
 						exec[EXEC_VP]+
 						exec[EXEC_STATE]+
-						exec[EXEC_ATTORNEY]+random(9)-4)/4;
+						exec[EXEC_ATTORNEY]+LCSrandom(9)-4)/4;
 
 					if(law[bill[c]]>vote && billdir[c]==-1)yeswin_s=1;
 					if(law[bill[c]]<vote && billdir[c]==1)yeswin_s=1;
@@ -17603,8 +17788,7 @@ void congress(char clearformess,char canseethings)
 					{
 					refresh();
 
-					unsigned long time=GetTickCount();
-					while(time+10>GetTickCount()&&time<=GetTickCount());
+					pause_ms(10);
 					}
 
 				getch();
@@ -17640,11 +17824,10 @@ void congress(char clearformess,char canseethings)
 
 			nodelay(stdscr,TRUE);
 
-			unsigned long time=GetTickCount();
-			while(time+500>GetTickCount()&&time<=GetTickCount())getch();
+			pause_ms(500);
 			}
 
-		for(c=0;c<bill.size();c++)
+		for(int c=0;c<bill.size();c++)
 			{
 			char sign=0;
 			if(killbill[c]==1)sign=-1;
@@ -17653,7 +17836,7 @@ void congress(char clearformess,char canseethings)
 				int vote=(exec[EXEC_PRESIDENT]+
 					exec[EXEC_VP]+
 					exec[EXEC_STATE]+
-					exec[EXEC_ATTORNEY]+(short)random(9)-4)/4;
+					exec[EXEC_ATTORNEY]+(short)LCSrandom(9)-4)/4;
 				if(exec[EXEC_PRESIDENT]==2)vote=2;
 				if(exec[EXEC_PRESIDENT]==-2)vote=-2;
 
@@ -17683,8 +17866,7 @@ void congress(char clearformess,char canseethings)
 
 				refresh();
 
-				unsigned long time=GetTickCount();
-				while(time+500>GetTickCount()&&time<=GetTickCount())getch();
+				pause_ms(500);
 				}
 
 			if(sign==1)law[bill[c]]+=billdir[c];
@@ -17749,6 +17931,7 @@ void congress(char clearformess,char canseethings)
 
 void tossjustices(char canseethings)
 {
+	int j;
 	if(canseethings)
 		{
 		erase();
@@ -17766,7 +17949,7 @@ void tossjustices(char canseethings)
 	if(canseethings)
 		{
 		int tossnum=0;
-		for(int j=0;j<9;j++)
+		for(j=0;j<9;j++)
 			{
 			if(court[j]<=1)tossnum++;
 			}
@@ -18190,7 +18373,7 @@ char ratify(int level,int view,int lawview,char congress,char canseethings)
 		for(int l=0;l<435;l++)
 			{
 			vote=house[l];
-			if(vote>=-1&&vote<=1)vote+=random(3)-1;
+			if(vote>=-1&&vote<=1)vote+=LCSrandom(3)-1;
 
 			if(level==vote)yesvotes_h++;
 
@@ -18223,7 +18406,7 @@ char ratify(int level,int view,int lawview,char congress,char canseethings)
 				s++;
 
 				vote=senate[s];
-				if(vote>=-1&&vote<=1)vote+=random(3)-1;
+				if(vote>=-1&&vote<=1)vote+=LCSrandom(3)-1;
 
 				if(level==vote)yesvotes_s++;
 				}
@@ -18255,8 +18438,7 @@ char ratify(int level,int view,int lawview,char congress,char canseethings)
 					{
 					refresh();
 
-					unsigned long time=GetTickCount();
-					while(time+10>GetTickCount()&&time<=GetTickCount());
+					pause_ms(10);
 					}
 
 				getch();
@@ -18372,10 +18554,10 @@ char ratify(int level,int view,int lawview,char congress,char canseethings)
 				}
 
 			vote=0;
-			if((short)random(100)<smood)vote++;
-			if((short)random(100)<smood)vote++;
-			if((short)random(100)<smood)vote++;
-			if((short)random(100)<smood)vote++;
+			if((short)LCSrandom(100)<smood)vote++;
+			if((short)LCSrandom(100)<smood)vote++;
+			if((short)LCSrandom(100)<smood)vote++;
+			if((short)LCSrandom(100)<smood)vote++;
 			vote-=2;
 
 			if(canseethings)
@@ -18411,8 +18593,7 @@ char ratify(int level,int view,int lawview,char congress,char canseethings)
 				addstr(" Nay");
 
 				refresh();
-				unsigned long time=GetTickCount();
-				while(time+50>GetTickCount()&&time<=GetTickCount());
+				pause_ms(50);
 				}
 			}
 
@@ -18497,10 +18678,12 @@ void loadhighscores(void)
 	unsigned long loadversion;
 
 	DWORD numbytes;
-	HANDLE h=CreateFile("score.dat",GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+	HANDLE h;
 
-	if(h!=INVALID_HANDLE_VALUE)
-		{
+	h =LCSCreateFile("score.dat", LCSIO_READ);
+	
+	if(h!=NULL)
+		{	
 		ReadFile(h,&loadversion,sizeof(unsigned long),&numbytes,NULL);
 
 		if(loadversion<lowestloadscoreversion)
@@ -18583,9 +18766,9 @@ void savehighscore(char endtype)
 
 
 	DWORD numbytes;
-	HANDLE h=CreateFile("score.dat",GENERIC_READ|GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
-
-	if(h!=INVALID_HANDLE_VALUE)
+	HANDLE h;
+	h=LCSCreateFile("score.dat", LCSIO_WRITE);
+	if(h!=NULL)
 		{
 		WriteFile(h,&version,sizeof(unsigned long),&numbytes,NULL);
 
@@ -18605,10 +18788,11 @@ void savehighscore(char endtype)
 
 void viewhighscores(void)
 {
+	int s;
 	loadhighscores();
 
 	short validsum=0;
-	for(int s=0;s<SCORENUM;s++)
+	for(s=0;s<SCORENUM;s++)
 		{
 		if(score[s].valid)validsum++;
 		}
@@ -18882,7 +19066,7 @@ int choosespecialedition(char &clearformess)
 		{
 		if(location[loc]->renting==-1)continue;
 
-		for(l=0;l<location[loc]->loot.size();l++)
+		for(int l=0;l<location[loc]->loot.size();l++)
 			{
 			if(location[loc]->loot[l]->type!=ITEM_LOOT)continue;
 
@@ -18901,7 +19085,7 @@ int choosespecialedition(char &clearformess)
 		}
 	for(int sq=0;sq<squad.size();sq++)
 		{
-		for(l=0;l<squad[sq]->loot.size();l++)
+		for(int l=0;l<squad[sq]->loot.size();l++)
 			{
 			if(squad[sq]->loot[l]->type!=ITEM_LOOT)continue;
 
@@ -19000,28 +19184,28 @@ int choosespecialedition(char &clearformess)
 					{
 					if(location[loc]->renting==-1)continue;
 
-					for(l=0;l<location[loc]->loot.size();l++)
+					for(int l=0;l<location[loc]->loot.size();l++)
 						{
 						if(location[loc]->loot[l]->type!=ITEM_LOOT)continue;
 
 						if(location[loc]->loot[l]->loottype==loottype[slot])
 							{
 							delete location[loc]->loot[l];
-							location[loc]->loot.verase(l);
+							location[loc]->loot.erase(location[loc]->loot.begin() + l);
 							return loottype[slot];
 							}
 						}
 					}
 				for(int sq=0;sq<squad.size();sq++)
 					{
-					for(l=0;l<squad[sq]->loot.size();l++)
+					for(int l=0;l<squad[sq]->loot.size();l++)
 						{
 						if(squad[sq]->loot[l]->type!=ITEM_LOOT)continue;
 
 						if(squad[sq]->loot[l]->loottype==loottype[slot])
 							{
 							delete squad[sq]->loot[l];
-							squad[sq]->loot.verase(l);
+							squad[sq]->loot.erase(squad[sq]->loot.begin() + l);
 							return loottype[slot];
 							}
 						}
@@ -19264,7 +19448,7 @@ unsigned long fenceselect(void)
 			if(activesquad->loot[l]->number<=0)
 				{
 				delete activesquad->loot[l];
-				activesquad->loot.verase(l);
+				activesquad->loot.erase(activesquad->loot.begin() + l);
 				}
 			}
 		}
@@ -19472,7 +19656,7 @@ char incapacitated(creaturest &a,char noncombat,char &printed)
 
 	if(a.animalgloss==ANIMALGLOSS_TANK)
 		{
-		if(a.blood<=20||(a.blood<=50&&(random(2)||a.forceinc)))
+		if(a.blood<=20||(a.blood<=50&&(LCSrandom(2)||a.forceinc)))
 			{
 			a.forceinc=0;
 			if(noncombat)
@@ -19482,7 +19666,7 @@ char incapacitated(creaturest &a,char noncombat,char &printed)
 				move(16,1);
 				addstr("The ");
 				addstr(a.name);
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:addstr(" smokes...");
 						break;
@@ -19502,7 +19686,7 @@ char incapacitated(creaturest &a,char noncombat,char &printed)
 
 	if(a.animalgloss==ANIMALGLOSS_ANIMAL)
 		{
-		if(a.blood<=20||(a.blood<=50&&(random(2)||a.forceinc)))
+		if(a.blood<=20||(a.blood<=50&&(LCSrandom(2)||a.forceinc)))
 			{
 			a.forceinc=0;
 			if(noncombat)
@@ -19512,7 +19696,7 @@ char incapacitated(creaturest &a,char noncombat,char &printed)
 				move(16,1);
 				addstr("The ");
 				addstr(a.name);
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:addstr(" yelps in pain...");
 						break;
@@ -19532,7 +19716,7 @@ char incapacitated(creaturest &a,char noncombat,char &printed)
 		return 0;
 		}
 
-	if(a.blood<=20||(a.blood<=50&&(random(2)||a.forceinc)))
+	if(a.blood<=20||(a.blood<=50&&(LCSrandom(2)||a.forceinc)))
 		{
 		a.forceinc=0;
 		if(noncombat)
@@ -19541,7 +19725,7 @@ char incapacitated(creaturest &a,char noncombat,char &printed)
 
 			move(16,1);
 			addstr(a.name);
-			switch(random(54))
+			switch(LCSrandom(54))
 				{
 				case 0:
 					addstr(" desperately cries out to Jesus.");
@@ -19747,7 +19931,7 @@ char incapacitated(creaturest &a,char noncombat,char &printed)
 
 			move(16,1);
 			addstr(a.name);
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:
 					addstr(" looks on with authority.");
@@ -19952,24 +20136,24 @@ void printhealthstat(creaturest &g,int y,int x,char smll)
 
 void healthmodroll(int &aroll,creaturest &a)
 {
-	if(a.special[SPECIALWOUND_RIGHTEYE]!=1)aroll-=random(2);
-	if(a.special[SPECIALWOUND_LEFTEYE]!=1)aroll-=random(2);
+	if(a.special[SPECIALWOUND_RIGHTEYE]!=1)aroll-=LCSrandom(2);
+	if(a.special[SPECIALWOUND_LEFTEYE]!=1)aroll-=LCSrandom(2);
 	if(a.special[SPECIALWOUND_RIGHTEYE]!=1&&
-		a.special[SPECIALWOUND_LEFTEYE]!=1)aroll-=random(20);
-	if(a.special[SPECIALWOUND_RIGHTLUNG]!=1)aroll-=random(8);
-	if(a.special[SPECIALWOUND_LEFTLUNG]!=1)aroll-=random(8);
-	if(a.special[SPECIALWOUND_HEART]!=1)aroll-=random(10);
-	if(a.special[SPECIALWOUND_LIVER]!=1)aroll-=random(5);
-	if(a.special[SPECIALWOUND_STOMACH]!=1)aroll-=random(5);
-	if(a.special[SPECIALWOUND_RIGHTKIDNEY]!=1)aroll-=random(5);
-	if(a.special[SPECIALWOUND_LEFTKIDNEY]!=1)aroll-=random(5);
-	if(a.special[SPECIALWOUND_SPLEEN]!=1)aroll-=random(4);
-	if(a.special[SPECIALWOUND_LOWERSPINE]!=1)aroll-=random(100);
-	if(a.special[SPECIALWOUND_UPPERSPINE]!=1)aroll-=random(200);
-	if(a.special[SPECIALWOUND_NECK]!=1)aroll-=random(300);
-	if(a.special[SPECIALWOUND_RIBS]<RIBNUM)aroll-=random(5);
-	if(a.special[SPECIALWOUND_RIBS]<RIBNUM/2)aroll-=random(5);
-	if(a.special[SPECIALWOUND_RIBS]==0)aroll-=random(5);
+		a.special[SPECIALWOUND_LEFTEYE]!=1)aroll-=LCSrandom(20);
+	if(a.special[SPECIALWOUND_RIGHTLUNG]!=1)aroll-=LCSrandom(8);
+	if(a.special[SPECIALWOUND_LEFTLUNG]!=1)aroll-=LCSrandom(8);
+	if(a.special[SPECIALWOUND_HEART]!=1)aroll-=LCSrandom(10);
+	if(a.special[SPECIALWOUND_LIVER]!=1)aroll-=LCSrandom(5);
+	if(a.special[SPECIALWOUND_STOMACH]!=1)aroll-=LCSrandom(5);
+	if(a.special[SPECIALWOUND_RIGHTKIDNEY]!=1)aroll-=LCSrandom(5);
+	if(a.special[SPECIALWOUND_LEFTKIDNEY]!=1)aroll-=LCSrandom(5);
+	if(a.special[SPECIALWOUND_SPLEEN]!=1)aroll-=LCSrandom(4);
+	if(a.special[SPECIALWOUND_LOWERSPINE]!=1)aroll-=LCSrandom(100);
+	if(a.special[SPECIALWOUND_UPPERSPINE]!=1)aroll-=LCSrandom(200);
+	if(a.special[SPECIALWOUND_NECK]!=1)aroll-=LCSrandom(300);
+	if(a.special[SPECIALWOUND_RIBS]<RIBNUM)aroll-=LCSrandom(5);
+	if(a.special[SPECIALWOUND_RIBS]<RIBNUM/2)aroll-=LCSrandom(5);
+	if(a.special[SPECIALWOUND_RIBS]==0)aroll-=LCSrandom(5);
 }
 
 int clinictime(creaturest &g)
@@ -20025,11 +20209,11 @@ void siegecheck(char canseethings)
 			//HUNTING
 			if(location[l]->siege.timeuntillocated>0)
 				{
-				if(location[l]->front_business==-1||random(2))
+				if(location[l]->front_business==-1||LCSrandom(2))
 					{
 					location[l]->siege.timeuntillocated--;
 					if(offended_cops&&
-						location[l]->siege.timeuntillocated>1&&!random(2))
+						location[l]->siege.timeuntillocated>1&&!LCSrandom(2))
 						{
 						location[l]->siege.timeuntillocated--;
 						}
@@ -20057,6 +20241,7 @@ void siegecheck(char canseethings)
 				if(pool[p]->lawflag2 & LAWFLAG2_DISTURBANCE)crimes++;
 				if(pool[p]->lawflag2 & LAWFLAG2_HIREILLEGAL)crimes++;
 				if(pool[p]->lawflag2 & LAWFLAG2_RACKETEERING)crimes++;
+				if(pool[p]->lawflag2 & LAWFLAG2_LOITERING)crimes++;
 				if(pool[p]->lawflag & LAWFLAG_KIDNAPPER)crimes++;
 				if(pool[p]->lawflag & LAWFLAG_MURDERER)crimes++;
 				if(pool[p]->lawflag & LAWFLAG_THIEF)crimes++;
@@ -20085,11 +20270,11 @@ void siegecheck(char canseethings)
 				{
 				if(location[l]->siege.timeuntillocated==-1)
 					{
-					location[l]->siege.timeuntillocated=random(10)+10;
-					if(location[l]->front_business!=-1)location[l]->siege.timeuntillocated+=100+random(101);
-					if(location[l]->type==SITE_RESIDENTIAL_TENEMENT)location[l]->siege.timeuntillocated+=50+random(51);
-					if(location[l]->type==SITE_RESIDENTIAL_APARTMENT)location[l]->siege.timeuntillocated+=150+random(151);
-					if(location[l]->type==SITE_RESIDENTIAL_APARTMENT_UPSCALE)location[l]->siege.timeuntillocated+=350+random(351);
+					location[l]->siege.timeuntillocated=LCSrandom(10)+10;
+					if(location[l]->front_business!=-1)location[l]->siege.timeuntillocated+=100+LCSrandom(101);
+					if(location[l]->type==SITE_RESIDENTIAL_TENEMENT)location[l]->siege.timeuntillocated+=50+LCSrandom(51);
+					if(location[l]->type==SITE_RESIDENTIAL_APARTMENT)location[l]->siege.timeuntillocated+=150+LCSrandom(151);
+					if(location[l]->type==SITE_RESIDENTIAL_APARTMENT_UPSCALE)location[l]->siege.timeuntillocated+=350+LCSrandom(351);
 					}
 				}
 
@@ -20174,7 +20359,7 @@ void siegecheck(char canseethings)
 							getch();
 
 							delete pool[p];
-							pool.verase(p);
+							pool.erase(pool.begin() + p);
 							continue;
 							}
 						if(pool[p]->align!=1)
@@ -20186,7 +20371,7 @@ void siegecheck(char canseethings)
 							getch();
 
 							delete pool[p];
-							pool.verase(p);
+							pool.erase(pool.begin() + p);
 							continue;
 							}
 						}
@@ -20208,7 +20393,7 @@ void siegecheck(char canseethings)
 									}
 								}
 							delete vehicle[v];
-							vehicle.verase(v);
+							vehicle.erase(vehicle.begin() + v);
 							}
 						}
 					}
@@ -20217,7 +20402,7 @@ void siegecheck(char canseethings)
 
 		//OTHER OFFENDABLE ENTITIES
 			//CORPS
-		if(!location[l]->siege.siege&&offended_corps&&!random(600)&&numpres>0)
+		if(!location[l]->siege.siege&&offended_corps&&!LCSrandom(600)&&numpres>0)
 			{
 			erase();
 			set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -20237,7 +20422,7 @@ void siegecheck(char canseethings)
 			location[l]->siege.cameras_off=0;
 			}
 			//CIA
-		if(!location[l]->siege.siege&&offended_cia&&!random(600)&&numpres>0)
+		if(!location[l]->siege.siege&&offended_cia&&!LCSrandom(600)&&numpres>0)
 			{
 			erase();
 			set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -20277,7 +20462,7 @@ void siegecheck(char canseethings)
 			location[l]->siege.cameras_off=1;
 			}
 			//HICKS
-		if(!location[l]->siege.siege&&offended_amradio&&attitude[VIEW_AMRADIO]<=35&&!random(600)&&numpres>0)
+		if(!location[l]->siege.siege&&offended_amradio&&attitude[VIEW_AMRADIO]<=35&&!LCSrandom(600)&&numpres>0)
 			{
 			erase();
 			set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -20298,7 +20483,7 @@ void siegecheck(char canseethings)
 			location[l]->siege.lights_off=0;
 			location[l]->siege.cameras_off=0;
 			}
-		if(!location[l]->siege.siege&&offended_cablenews&&attitude[VIEW_CABLENEWS]<=35&&!random(600)&&numpres>0)
+		if(!location[l]->siege.siege&&offended_cablenews&&attitude[VIEW_CABLENEWS]<=35&&!LCSrandom(600)&&numpres>0)
 			{
 			erase();
 			set_color(COLOR_WHITE,COLOR_BLACK,1);
@@ -20339,7 +20524,7 @@ void siegeturn(char clearformess)
 
 	//ATTACK!
 	char attack=0;
-	if(!random(150))attack=1;
+	if(!LCSrandom(150))attack=1;
 
 	if(attack)
 		{
@@ -20366,7 +20551,7 @@ void siegeturn(char clearformess)
 
 		//CUT LIGHTS
 		if(!location[l]->siege.lights_off &&
-			!(location[l]->compound_walls & COMPOUND_GENERATOR) && !random(5))
+			!(location[l]->compound_walls & COMPOUND_GENERATOR) && !LCSrandom(5))
 			{
 			no_bad=0;
 
@@ -20389,7 +20574,7 @@ void siegeturn(char clearformess)
 			}
 
 		//SNIPER
-		if(!random(20))
+		if(!LCSrandom(20))
 			{
 			no_bad=0;
 
@@ -20408,8 +20593,8 @@ void siegeturn(char clearformess)
 				else makedelimiter(8,0);
 				set_color(COLOR_WHITE,COLOR_BLACK,1);
 				move(8,1);
-				int targ=pol[random(pol.size())];
-				if(random(100)>pool[targ]->juice)
+				int targ=pol[LCSrandom(pol.size())];
+				if(LCSrandom(100)>pool[targ]->juice)
 					{
 					addstr("A police sniper takes out ");
 					addstr(pool[targ]->name);
@@ -20419,7 +20604,7 @@ void siegeturn(char clearformess)
 
 					removesquadinfo(*pool[targ]);
 					delete pool[targ];
-					pool.verase(targ);
+					pool.erase(pool.begin() + targ);
 					}
 				else
 					{
@@ -20432,12 +20617,12 @@ void siegeturn(char clearformess)
 				}
 			}
 	
-		if(location[l]->siege.escalationstate>=3 && !random(5))
+		if(location[l]->siege.escalationstate>=3 && !LCSrandom(5))
 			{
 			no_bad=0;
 
 			//AIR STRIKE!
-			char hit=!random(3);
+			char hit=!LCSrandom(3);
 			if(!(location[l]->compound_walls & COMPOUND_GENERATOR))hit=0;
 
 			if(clearformess)
@@ -20482,7 +20667,7 @@ void siegeturn(char clearformess)
 				getch();
 				}
 
-			if(!random(20))
+			if(!LCSrandom(20))
 				{
 				vector<int> pol;
 				for(int p=0;p<pool.size();p++)
@@ -20499,8 +20684,8 @@ void siegeturn(char clearformess)
 					else makedelimiter(8,0);
 					set_color(COLOR_WHITE,COLOR_BLACK,1);
 					move(8,1);
-					int targ=pol[random(pol.size())];
-					if(random(100)>pool[targ]->juice)
+					int targ=pol[LCSrandom(pol.size())];
+					if(LCSrandom(100)>pool[targ]->juice)
 						{
 						addstr(pool[targ]->name);
 						addstr(" died in the bombing!");
@@ -20509,7 +20694,7 @@ void siegeturn(char clearformess)
 
 						removesquadinfo(*pool[targ]);
 						delete pool[targ];
-						pool.verase(targ);
+						pool.erase(pool.begin() + targ);
 						}
 					else
 						{
@@ -20537,7 +20722,7 @@ void siegeturn(char clearformess)
 				}
 			}
 		if((location[l]->compound_walls & COMPOUND_TANKTRAPS) &&
-			location[l]->siege.escalationstate>=3 && !random(5))
+			location[l]->siege.escalationstate>=3 && !LCSrandom(5))
 			{
 			no_bad=0;
 
@@ -20569,7 +20754,7 @@ void siegeturn(char clearformess)
 			livingpool++;
 			}
 
-		if(!random(50)&&no_bad&&livingpool)
+		if(!LCSrandom(50)&&no_bad&&livingpool)
 			{
 			char repname[200];
 			name(repname);
@@ -20581,7 +20766,7 @@ void siegeturn(char clearformess)
 			addstr("Elitist ");
 			addstr(repname);
 			addstr(" from the ");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:addstr("news program");break;
 				case 1:addstr("news magazine");break;
@@ -20590,7 +20775,7 @@ void siegeturn(char clearformess)
 				case 4:addstr("newspaper");break;
 				}
 			addstr(" ");
-			switch(random(11))
+			switch(LCSrandom(11))
 				{
 				case 0:addstr("Daily");break;
 				case 1:addstr("Nightly");break;
@@ -20605,7 +20790,7 @@ void siegeturn(char clearformess)
 				case 10:addstr("International");break;
 				}
 			addstr(" ");
-			switch(random(11))
+			switch(LCSrandom(11))
 				{
 				case 0:addstr("Reporter");break;
 				case 1:addstr("Issue");break;
@@ -20655,7 +20840,7 @@ void siegeturn(char clearformess)
 			refresh();
 			getch();
 
-			int segmentpower=random(bestvalue*2+1);
+			int segmentpower=LCSrandom(bestvalue*2+1);
 
 			move(8,1);
 			if(segmentpower<10)
@@ -20665,7 +20850,7 @@ void siegeturn(char clearformess)
 				move(9,1);
 				addstr("and later used the material for a Broadway play called");
 				move(10,1);
-				switch(random(11))
+				switch(LCSrandom(11))
 					{
 					case 0:addstr("Flaming");break;
 					case 1:addstr("Retarded");break;
@@ -20680,7 +20865,7 @@ void siegeturn(char clearformess)
 					case 10:addstr("Stoner");break;
 					}
 				addstr(" ");
-				switch(random(10))
+				switch(LCSrandom(10))
 					{
 					case 0:addstr("Liberal");break;
 					case 1:addstr("Socialist");break;
@@ -20726,7 +20911,7 @@ void siegeturn(char clearformess)
 				{
 				do
 					{
-					viewhit=random(VIEWNUM);
+					viewhit=LCSrandom(VIEWNUM);
 					}while(viewhit==VIEW_LIBERALCRIMESQUADPOS);
 				if(viewhit!=VIEW_LIBERALCRIMESQUAD)change_public_opinion(viewhit,(segmentpower-25)/2,1,0);
 				else change_public_opinion(viewhit,segmentpower/4,1,0);
@@ -20771,7 +20956,8 @@ void giveup(void)
 		char pname[100];
 		char pcname[100];
 		int icount=0;
-		for(int p=pool.size()-1;p>=0;p--)
+		int p;
+		for(p=pool.size()-1;p>=0;p--)
 			{
 			if(pool[p]->location!=loc)continue;
 			if(!pool[p]->alive)continue;
@@ -20870,7 +21056,7 @@ void giveup(void)
 				{
 				removesquadinfo(*pool[p]);
 				delete pool[p];
-				pool.verase(p);
+				pool.erase(pool.begin() + p);
 				continue;
 				}
 
@@ -20909,7 +21095,7 @@ void giveup(void)
 			killnumber++;
 			removesquadinfo(*pool[p]);
 			delete pool[p];
-			pool.verase(p);
+			pool.erase(pool.begin() + p);
 			}
 
 		erase();
@@ -20941,7 +21127,7 @@ void giveup(void)
 	location[loc]->loot.clear();
 	for(int v=vehicle.size()-1;v>=0;v--)
 		{
-		if(vehicle[v]->location==l)
+		if(vehicle[v]->location==loc)
 			{
 			for(int p=0;p<pool.size();p++)
 				{
@@ -20951,7 +21137,7 @@ void giveup(void)
 					}
 				}
 			delete vehicle[v];
-			vehicle.verase(v);
+			vehicle.erase(vehicle.begin() + v);
 			}
 		}
 }
@@ -21060,7 +21246,7 @@ void escape_engage(void)
 					squad[sq]->squad[p]->squadid=-1;
 					}
 				delete squad[sq];
-				squad.verase(sq);
+				squad.erase(squad.begin() + sq);
 				}
 			}
 		}
@@ -21085,7 +21271,8 @@ void autopromote(int loc)
 
 	int partysize=0;
 	int partydead=0;
-	for(int p=0;p<6;p++)
+	int p;
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)partysize++;
 		else continue;
@@ -21112,7 +21299,7 @@ void autopromote(int loc)
 
 		if(conf)
 			{
-			for(pl=0;pl<pool.size();pl++)
+			for(int pl=0;pl<pool.size();pl++)
 				{
 				if(pool[pl]->location!=loc)continue;
 				if(pool[pl]->alive&&pool[pl]->squadid==-1&&
@@ -21184,13 +21371,13 @@ void escapesiege(char won)
 			if(!pool[p]->alive)
 				{
 				delete pool[p];
-				pool.verase(p);
+				pool.erase(pool.begin() + p);
 				continue;
 				}
 
 			//BASE EVERYONE LEFT AT HOMELESS SHELTER
 			removesquadinfo(*pool[p]);
-			pool[p]->hiding=random(3)+2;
+			pool[p]->hiding=LCSrandom(3)+2;
 			pool[p]->location=-1;
 			pool[p]->base=homes;
 			}
@@ -21212,7 +21399,7 @@ void escapesiege(char won)
 						}
 					}
 				delete vehicle[v];
-				vehicle.verase(v);
+				vehicle.erase(vehicle.begin() + v);
 				}
 			}
 
@@ -21228,7 +21415,7 @@ void escapesiege(char won)
 		{
 		if(location[cursite]->siege.siegetype==SIEGE_POLICE)
 			{
-			location[cursite]->siege.timeuntillocated=random(4)+4;
+			location[cursite]->siege.timeuntillocated=LCSrandom(4)+4;
 			location[cursite]->siege.escalationstate++;
 			}
 		}
@@ -21250,7 +21437,7 @@ char addsiegeencounter(char type)
 			{
 			if(freeslots<6)return 0;
 
-			num=random(3)+4;
+			num=LCSrandom(3)+4;
 
 			for(int e=0;e<ENCMAX;e++)
 				{
@@ -21259,7 +21446,7 @@ char addsiegeencounter(char type)
 				switch(location[cursite]->siege.siegetype)
 					{
 					case SIEGE_POLICE:
-						if(location[cursite]->siege.escalationstate==0||random(2))
+						if(location[cursite]->siege.escalationstate==0||LCSrandom(2))
 							{
 							if(law[LAW_DEATHPENALTY]==-2&&
 							   law[LAW_POLICEBEHAVIOR]==-2)makecreature(encounter[e],CREATURE_DEATHSQUAD);
@@ -21281,7 +21468,7 @@ char addsiegeencounter(char type)
 
 				if(type==SIEGEFLAG_UNIT_DAMAGED)
 					{
-					encounter[e].blood=random(50)+1;
+					encounter[e].blood=LCSrandom(50)+1;
 					}
 
 				num--;
@@ -21428,6 +21615,7 @@ void statebrokenlaws(int loc)
 		if(pool[p]->lawflag2 & LAWFLAG2_DISTURBANCE){breakercount2[7]++;typenum++;}
 		if(pool[p]->lawflag2 & LAWFLAG2_HIREILLEGAL){breakercount2[8]++;typenum++;}
 		if(pool[p]->lawflag2 & LAWFLAG2_RACKETEERING){breakercount2[9]++;typenum++;}
+		if(pool[p]->lawflag2 & LAWFLAG2_LOITERING){breakercount2[10]++;typenum++;}
 		}
 
 	erase();
@@ -21663,6 +21851,8 @@ void trial(creaturest &g)
 
 	set_color(COLOR_WHITE,COLOR_BLACK,0);
 
+	if(g.lawflag==0&&g.lawflag2==0)g.lawflag2|=LAWFLAG2_LOITERING;
+
 	short breaker=g.lawflag;
 	short breaker2=g.lawflag2;
 	int typenum=0;
@@ -21691,6 +21881,7 @@ void trial(creaturest &g)
 	if(g.lawflag2 & LAWFLAG2_DISTURBANCE)typenum++;
 	if(g.lawflag2 & LAWFLAG2_HIREILLEGAL)typenum++;
 	if(g.lawflag2 & LAWFLAG2_RACKETEERING)typenum++;
+	if(g.lawflag2 & LAWFLAG2_LOITERING)typenum++;
 
 	//CHECK FOR SLEEPERS
 	vector<int> sjudge;
@@ -21715,10 +21906,10 @@ void trial(creaturest &g)
 			}
 		}
 
-	if(random(10)<sjudge.size())
+	if(LCSrandom(10)<sjudge.size())
 		{
 		sleeperjudge=1;
-		sleeperjname=pool[sjudge[random(sjudge.size())]]->name;
+		sleeperjname=pool[sjudge[LCSrandom(sjudge.size())]]->name;
 		}
 
 	//STATE CHARGES
@@ -21868,6 +22059,11 @@ void trial(creaturest &g)
 			addstr("disturbing the peace");
 			breaker2&=~LAWFLAG2_DISTURBANCE;
 			}
+		else if(breaker2 & LAWFLAG2_LOITERING)
+			{
+			addstr("loitering");
+			breaker2&=~LAWFLAG2_LOITERING;
+			}
 
 		if(typenum>1)addstr(", ");
 		if(typenum==1)addstr(" and ");
@@ -21956,11 +22152,11 @@ void trial(creaturest &g)
 		//JURY MAKEUP MESSAGE
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
 		move(5,1);
-		int jury=random(101)-50;
+		int jury=LCSrandom(101)-50;
 		if(sleeperjudge)jury-=50;
 		if(jury<=-40)
 			{
-			switch(random(4))
+			switch(LCSrandom(4))
 				{
 				case 0:addstr(g.name);addstr("'s best friend from childhood is a juror.");break;
 				case 1:addstr("The jury is Flaming Liberal.");break;
@@ -21973,7 +22169,7 @@ void trial(creaturest &g)
 		else if(jury<40)addstr("The jury is a bit Conservative.");
 		else
 			{
-			switch(random(4))
+			switch(LCSrandom(4))
 				{
 				case 0:addstr("Such a collection of Conservative jurors has never before been assembled.");break;
 				case 1:addstr("One of the accepted jurors is a Conservative activist.");break;
@@ -21985,7 +22181,7 @@ void trial(creaturest &g)
 		getch();
 
 		//PROSECUTION MESSAGE
-		int prosecution=random(100);
+		int prosecution=LCSrandom(100);
 		if(sleeperjudge)prosecution>>=1;
 
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -22000,7 +22196,7 @@ void trial(creaturest &g)
 		refresh();
 		getch();
 
-		jury+=random(prosecution/2+1)+prosecution/2;
+		jury+=LCSrandom(prosecution/2+1)+prosecution/2;
 
 		//DEFENSE MESSAGE
 		set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -22009,10 +22205,10 @@ void trial(creaturest &g)
 		int defensepower=0;
 		if(defense==0||defense==3)
 			{
-			if(defense==0)defensepower=random(51);
+			if(defense==0)defensepower=LCSrandom(51);
 			else
 				{
-				defensepower=random(101)+50;
+				defensepower=LCSrandom(101)+50;
 				}
 
 			if(defensepower<=15)addstr("The defense attorney accidentally said \"My client is GUILTY!\" during closing.");
@@ -22034,8 +22230,8 @@ void trial(creaturest &g)
 			defensepower+=g.attval(ATTRIBUTE_INTELLIGENCE);
 			defensepower+=g.attval(ATTRIBUTE_HEART);
 			defensepower+=g.attval(ATTRIBUTE_CHARISMA)*2;
-			defensepower+=random(g.skill[SKILL_PERSUASION]*7+1);
-			defensepower+=random(g.skill[SKILL_LAW]*7+1);
+			defensepower+=LCSrandom(g.skill[SKILL_PERSUASION]*7+1);
+			defensepower+=LCSrandom(g.skill[SKILL_LAW]*7+1);
 			g.skill_ip[SKILL_PERSUASION]+=50;
 			g.skill_ip[SKILL_LAW]+=50;
 
@@ -22080,7 +22276,7 @@ void trial(creaturest &g)
 			getch();
 
 			//RE-TRY
-			if(random(2))
+			if(LCSrandom(2))
 				{
 				set_color(COLOR_WHITE,COLOR_BLACK,0);
 				move(5,1);
@@ -22161,7 +22357,7 @@ void trial(creaturest &g)
 		refresh();
 		getch();
 
-		penalize(g,random(2));
+		penalize(g,LCSrandom(2));
 		//CLEAN UP LAW FLAGS
 		g.lawflag=0;
 		g.lawflag2=0;
@@ -22222,7 +22418,7 @@ char prison(creaturest &g)
 				addstr("by ");
 				if(law[LAW_DEATHPENALTY]==-2)
 					{
-					switch(random(23))
+					switch(LCSrandom(23))
 						{
 						case 0:addstr("beheading");break;
 						case 1:addstr("drawing and quartering");break;
@@ -22251,7 +22447,7 @@ char prison(creaturest &g)
 					}
 				else if(law[LAW_DEATHPENALTY]==-1||law[LAW_DEATHPENALTY]==0)
 					{
-					switch(random(4))
+					switch(LCSrandom(4))
 						{
 						case 0:addstr("lethal injection");break;
 						case 1:addstr("hanging");break;
@@ -22327,7 +22523,8 @@ char prison(creaturest &g)
 void partyrescue(void)
 {
 	int freeslots=0;
-	for(int p=0;p<6;p++)
+	int p, pl;
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]==NULL)freeslots++;
 		}
@@ -22343,12 +22540,12 @@ void partyrescue(void)
 			}
 		}
 
-	for(int pl=0;pl<pool.size();pl++)
+	for(pl=0;pl<pool.size();pl++)
 		{
 		if(pool[pl]->location==cursite&&
 			!(pool[pl]->flag & CREATUREFLAG_SLEEPER))
 			{
-			if(random(2)&&freeslots)
+			if(LCSrandom(2)&&freeslots)
 				{
 				for(int p=0;p<6;p++)
 					{
@@ -22414,7 +22611,7 @@ void partyrescue(void)
 							move(16,1);
 							addstr(pool[pl]->name);
 							addstr(" ");
-							switch(random(3))
+							switch(LCSrandom(3))
 								{
 								case 0:addstr("was tortured recently");break;
 								case 1:addstr("was beaten severely yesterday");break;
@@ -22497,62 +22694,63 @@ void penalize(creaturest &g,char lenient)
 		law[LAW_DEATHPENALTY]==-2)
 		{
 		if(law[LAW_DEATHPENALTY]==-2)g.deathpenalty=1;
-		if(law[LAW_DEATHPENALTY]==-1)g.deathpenalty=random(3);
-		if(law[LAW_DEATHPENALTY]==0)g.deathpenalty=random(2);
-		if(law[LAW_DEATHPENALTY]==1)g.deathpenalty=!random(5);
+		if(law[LAW_DEATHPENALTY]==-1)g.deathpenalty=LCSrandom(3);
+		if(law[LAW_DEATHPENALTY]==0)g.deathpenalty=LCSrandom(2);
+		if(law[LAW_DEATHPENALTY]==1)g.deathpenalty=!LCSrandom(5);
 		if(law[LAW_DEATHPENALTY]==2)g.deathpenalty=0;
 		}
 
 	//CALC TIME
 	if(!g.deathpenalty)
 		{
-		if((g.lawflag & LAWFLAG_KIDNAPPER)&&g.sentence!=-1)g.sentence+=36+random(18);
-		if((g.lawflag & LAWFLAG_THIEF)&&g.sentence!=-1)g.sentence+=3+random(8);
-		if((g.lawflag2 & LAWFLAG2_CARTHEFT)&&g.sentence!=-1)g.sentence+=6+random(7);
-		if((g.lawflag2 & LAWFLAG2_INFORMATION)&&g.sentence!=-1)g.sentence+=1+random(13);
-		if((g.lawflag2 & LAWFLAG2_COMMERCE)&&g.sentence!=-1)g.sentence+=1+random(13);
-		if((g.lawflag2 & LAWFLAG2_CCFRAUD)&&g.sentence!=-1)g.sentence+=6+random(25);
-		if((g.lawflag2 & LAWFLAG2_BURIAL)&&g.sentence!=-1)g.sentence+=3+random(12);
-		if((g.lawflag2 & LAWFLAG2_PROSTITUTION)&&g.sentence!=-1)g.sentence+=1+random(6);
+		if((g.lawflag & LAWFLAG_KIDNAPPER)&&g.sentence!=-1)g.sentence+=36+LCSrandom(18);
+		if((g.lawflag & LAWFLAG_THIEF)&&g.sentence!=-1)g.sentence+=3+LCSrandom(8);
+		if((g.lawflag2 & LAWFLAG2_CARTHEFT)&&g.sentence!=-1)g.sentence+=6+LCSrandom(7);
+		if((g.lawflag2 & LAWFLAG2_INFORMATION)&&g.sentence!=-1)g.sentence+=1+LCSrandom(13);
+		if((g.lawflag2 & LAWFLAG2_COMMERCE)&&g.sentence!=-1)g.sentence+=1+LCSrandom(13);
+		if((g.lawflag2 & LAWFLAG2_CCFRAUD)&&g.sentence!=-1)g.sentence+=6+LCSrandom(25);
+		if((g.lawflag2 & LAWFLAG2_BURIAL)&&g.sentence!=-1)g.sentence+=3+LCSrandom(12);
+		if((g.lawflag2 & LAWFLAG2_PROSTITUTION)&&g.sentence!=-1)g.sentence+=1+LCSrandom(6);
 		if((g.lawflag2 & LAWFLAG2_DISTURBANCE)&&g.sentence!=-1)g.sentence+=1;
+		if((g.lawflag2 & LAWFLAG2_LOITERING)&&g.sentence!=-1)g.sentence+=1;
 		if((g.lawflag2 & LAWFLAG2_HIREILLEGAL)&&g.sentence!=-1)g.sentence+=1;
-		if((g.lawflag2 & LAWFLAG2_RACKETEERING)&&g.sentence!=-1)g.sentence+=6+random(100);
+		if((g.lawflag2 & LAWFLAG2_RACKETEERING)&&g.sentence!=-1)g.sentence+=6+LCSrandom(100);
 		if((g.lawflag2 & LAWFLAG2_BROWNIES)&&g.sentence!=-1)
 			{
-			if(random(3))g.sentence+=3+random(12);
+			if(LCSrandom(3))g.sentence+=3+LCSrandom(12);
 			else
 				{
-				if(random(3))g.sentence+=3+random(120);
-				else g.sentence+=3+random(360);
+				if(LCSrandom(3))g.sentence+=3+LCSrandom(120);
+				else g.sentence+=3+LCSrandom(360);
 				}
 			}
 		if((g.lawflag & LAWFLAG_BREAKING)&&g.sentence!=-1)g.sentence+=1;
-		if((g.lawflag & LAWFLAG_TERRORISM)&&g.sentence!=-1)g.sentence+=60+random(181);
-		if((g.lawflag & LAWFLAG_JURY)&&g.sentence!=-1)g.sentence+=30+random(61);
+		if((g.lawflag & LAWFLAG_TERRORISM)&&g.sentence!=-1)g.sentence+=60+LCSrandom(181);
+		if((g.lawflag & LAWFLAG_JURY)&&g.sentence!=-1)g.sentence+=30+LCSrandom(61);
 		if((g.lawflag & LAWFLAG_ESCAPED)&&g.sentence!=-1)g.sentence=-1;
-		if((g.lawflag & LAWFLAG_HELPESCAPE)&&g.sentence!=-1)g.sentence+=30+random(61);
-		if((g.lawflag & LAWFLAG_RESIST)&&g.sentence!=-1)g.sentence+=1+random(1);
+		if((g.lawflag & LAWFLAG_HELPESCAPE)&&g.sentence!=-1)g.sentence+=30+LCSrandom(61);
+		if((g.lawflag & LAWFLAG_RESIST)&&g.sentence!=-1)g.sentence+=1+LCSrandom(1);
 		if((g.lawflag & LAWFLAG_BURNFLAG)&&g.sentence!=-1)
 			{
 			if(law[LAW_FLAGBURNING]==-2)
 				{
-				if(!random(2))g.sentence+=120+random(241);
+				if(!LCSrandom(2))g.sentence+=120+LCSrandom(241);
 				else g.sentence=-1;
 				}
 			else if(law[LAW_FLAGBURNING]==-1)g.sentence+=36;
 			else if(law[LAW_FLAGBURNING]==0)g.sentence+=1;
 			}
-		if((g.lawflag & LAWFLAG_SPEECH)&&g.sentence!=-1)g.sentence+=4+random(3);
+		if((g.lawflag & LAWFLAG_SPEECH)&&g.sentence!=-1)g.sentence+=4+LCSrandom(3);
 		if((g.lawflag & LAWFLAG_VANDALISM)&&g.sentence!=-1)g.sentence+=1;
-		if((g.lawflag & LAWFLAG_ASSAULT)&&g.sentence!=-1)g.sentence+=3+random(1);
+		if((g.lawflag & LAWFLAG_ASSAULT)&&g.sentence!=-1)g.sentence+=3+LCSrandom(1);
 		if((g.lawflag & LAWFLAG_MURDERER)&&g.sentence!=-1)
 			{
-			if(!random(2))g.sentence+=120+random(241);
+			if(!LCSrandom(2))g.sentence+=120+LCSrandom(241);
 			else g.sentence=-1;
 			}
 		if((g.lawflag & LAWFLAG_TREASON)&&g.sentence!=-1)g.sentence=-1;
 		if(lenient&&g.sentence!=-1)g.sentence/=2;
-		if(lenient&&g.sentence==-1)g.sentence=240+random(120);
+		if(lenient&&g.sentence==-1)g.sentence=240+LCSrandom(120);
 		}
 	//LENIENCY AND CAPITAL PUNISHMENT DON'T MIX
 	else if(g.deathpenalty&&lenient)
@@ -22641,7 +22839,7 @@ void printnews(short l,short newspaper)
 			move(6,1);
 			addstr("The Liberal Guardian runs a story featuring photos of a major CEO");
 			move(7,1);
-			switch(random(10))
+			switch(LCSrandom(10))
 				{
 				case 0:
 					addstr("engaging in lude behavior with animals.");
@@ -22683,7 +22881,7 @@ void printnews(short l,short newspaper)
 			move(6,1);
 			addstr("The Liberal Guardian runs a story featuring Corporate files");
 			move(7,1);
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:
 					addstr("describing a genetic monster created in a lab.");
@@ -22722,7 +22920,7 @@ void printnews(short l,short newspaper)
 			move(6,1);
 			addstr("The Liberal Guardian runs a story featuring CIA and other intelligence files");
 			move(7,1);
-			switch(random(6))
+			switch(LCSrandom(6))
 				{
 				case 0:addstr("documenting the overthrow of a government.");break;
 				case 1:
@@ -22757,7 +22955,7 @@ void printnews(short l,short newspaper)
 			move(6,1);
 			addstr("The Liberal Guardian runs a story featuring police records");
 			move(7,1);
-			switch(random(6))
+			switch(LCSrandom(6))
 				{
 				case 0:addstr("documenting human rights abuses by the force.");break;
 				case 1:addstr("documenting a police torture case.");break;
@@ -22798,7 +22996,7 @@ void adddeathmessage(creaturest &cr)
 		(cr.wound[BODYPART_HEAD] & WOUND_NASTYOFF))
 		{
 		strcpy(str,cr.name);
-		switch(random(4))
+		switch(LCSrandom(4))
 			{
 			case 0:
 				strcat(str," reaches once where there");
@@ -22845,7 +23043,7 @@ void adddeathmessage(creaturest &cr)
 		(cr.wound[BODYPART_BODY] & WOUND_NASTYOFF))
 		{
 		strcpy(str,cr.name);
-		switch(random(2))
+		switch(LCSrandom(2))
 			{
 			case 0:strcat(str," falls into pieces.");break;
 			case 1:strcat(str," breaks apart and is dead.");break;
@@ -22855,7 +23053,7 @@ void adddeathmessage(creaturest &cr)
 	else
 		{
 		strcpy(str,cr.name);
-		switch(random(10))
+		switch(LCSrandom(10))
 			{
 			case 0:
 				strcat(str," cries out one last time");
@@ -23034,7 +23232,7 @@ void consolidateloot(vector<itemst *> &loot)
 					if(loot[l2]->type==ITEM_MONEY)loot[l2]->money+=loot[l]->money;
 					else loot[l2]->number+=loot[l]->number;
 					delete loot[l];
-					loot.verase(l);
+					loot.erase(loot.begin() + l);
 					break;
 					}
 				}
@@ -23050,15 +23248,15 @@ void consolidateloot(vector<itemst *> &loot)
 			if(itemcompare(loot[l],loot[l2])>=0)
 				{
 				pt=loot[l];
-				loot.verase(l);
-				loot.insert(l2-1,pt);
+				loot.erase(loot.begin() + l);
+				loot.insert(loot.begin()+l2-1,pt);
 				break;
 				}
 			}
 		if(l2==loot.size())
 			{
 			pt=loot[l];
-			loot.verase(l);
+			loot.erase(loot.begin() + l);
 			loot.push_back(pt);
 			}
 		}
@@ -23931,11 +24129,14 @@ int monthday(void)
 
 void advanceday(char &clearformess,char canseethings)
 {
+	int p;
 	showcarprefs=0;
+	int w=0;
+	int l2;
 
 	//CLEAR CAR STATES
 	vector<long> caridused;
-	for(int p=0;p<pool.size();p++)pool[p]->carid=-1;
+	for(p=0;p<pool.size();p++)pool[p]->carid=-1;
 
 	//SHUFFLE AROUND THE SQUADLESS
 	int homes;
@@ -24041,13 +24242,13 @@ void advanceday(char &clearformess,char canseethings)
 			//CAR UP AS NECESSARY
 			vector<long> wantcar;
 
-			for(int p=0;p<6;p++)
+			for(p=0;p<6;p++)
 				{
 				if(squad[sq]->squad[p]!=NULL)
 					{
 					long wid=squad[sq]->squad[p]->pref_carid;
 					if(wid==-1)continue;
-					for(int w=0;w<wantcar.size();w++)
+					for(w=0;w<wantcar.size();w++)
 						{
 						if(wantcar[w]==wid)break;
 						}
@@ -24082,7 +24283,7 @@ void advanceday(char &clearformess,char canseethings)
 							refresh();
 							getch();
 
-							wantcar.verase(c);
+							wantcar.erase(wantcar.begin() + c);
 							}
 						}
 					}
@@ -24093,14 +24294,14 @@ void advanceday(char &clearformess,char canseethings)
 				{
 				vector<int> driver;
 				vector<int> passenger;
-				for(int w=0;w<wantcar.size();w++)
+				for(w=0;w<wantcar.size();w++)
 					{
 					driver.clear();
 					passenger.clear();
 					caridused.push_back(wantcar[w]);
 
 					//FILL CAR WITH DESIGNATED DRIVERS AND PASSENGERS
-					for(int p=0;p<6;p++)
+					for(p=0;p<6;p++)
 						{
 						if(squad[sq]->squad[p]!=NULL)
 							{
@@ -24121,7 +24322,7 @@ void advanceday(char &clearformess,char canseethings)
 						if(passenger.size()>0)
 							{
 							int max=0;
-							for(int p=0;p<passenger.size();p++)
+							for(p=0;p<passenger.size();p++)
 								{
 								long v=id_getcar(squad[sq]->squad[passenger[p]]->carid);
 								if(driveskill(*squad[sq]->squad[passenger[p]],vehicle[v])>max&&
@@ -24143,7 +24344,7 @@ void advanceday(char &clearformess,char canseethings)
 
 							if(goodp.size()>0)
 								{
-								int p=goodp[random(goodp.size())];
+								int p=goodp[LCSrandom(goodp.size())];
 								squad[sq]->squad[p]->is_driver=1;
 								}
 							}
@@ -24153,7 +24354,7 @@ void advanceday(char &clearformess,char canseethings)
 						{
 						//TOSS ALL BUT THE BEST
 						int max=0;
-						for(int p=0;p<driver.size();p++)
+						for(p=0;p<driver.size();p++)
 							{
 							long v=id_getcar(squad[sq]->squad[driver[p]]->carid);
 							if(driveskill(*squad[sq]->squad[driver[p]],vehicle[v])>max)
@@ -24173,7 +24374,7 @@ void advanceday(char &clearformess,char canseethings)
 
 						if(goodp.size()>0)
 							{
-							int p=goodp[random(goodp.size())];
+							int p=goodp[LCSrandom(goodp.size())];
 							for(int p2=0;p2<driver.size();p2++)
 								{
 								if(p2==p)continue;
@@ -24191,7 +24392,7 @@ void advanceday(char &clearformess,char canseethings)
 						{
 						if(squad[sq]->squad[p]->carid==-1)
 							{
-							squad[sq]->squad[p]->carid=wantcar[random(wantcar.size())];
+							squad[sq]->squad[p]->carid=wantcar[LCSrandom(wantcar.size())];
 							squad[sq]->squad[p]->is_driver=0;
 							}
 						}
@@ -24482,7 +24683,7 @@ void advanceday(char &clearformess,char canseethings)
 
 					//MOVE ALL ITEMS AND SQUAD MEMBERS
 					int hs=0;
-					for(int l2=0;l2<location.size();l2++)
+					for(l2=0;l2<location.size();l2++)
 						{
 						if(location[l2]->type==SITE_RESIDENTIAL_SHELTER)
 							{
@@ -24546,7 +24747,7 @@ void advanceday(char &clearformess,char canseethings)
 					if(completevacation(*date[d],p,clearformess))
 						{
 						delete date[d];
-						date.verase(d);
+						date.erase(date.begin() + d);
 						continue;
 						}
 					}
@@ -24558,14 +24759,14 @@ void advanceday(char &clearformess,char canseethings)
 				if(location[pool[p]->location]->siege.siege)
 					{
 					delete date[d];
-					date.verase(d);
+					date.erase(date.begin() + d);
 					continue;
 					}
 				//DO DATE
 				else if(completedate(*date[d],p,clearformess))
 					{
 					delete date[d];
-					date.verase(d);
+					date.erase(date.begin() + d);
 					continue;
 					}
 				else
@@ -24573,6 +24774,8 @@ void advanceday(char &clearformess,char canseethings)
 					pool[p]->dating=date[d]->timeleft;
 					if(pool[p]->dating>0)
 						{
+						//&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+							//gets rid of equipment if only member in squad!
 						removesquadinfo(*pool[p]);
 						pool[p]->location=-1;
 						}
@@ -24582,14 +24785,13 @@ void advanceday(char &clearformess,char canseethings)
 		else
 			{
 			delete date[d];
-			date.verase(d);
+			date.erase(date.begin() + d);
 			continue;
 			}
 		}
 
 	//AGE THINGS
 	day++;
-	int s;
 	for(p=0;p<pool.size();p++)
 		{
 		if(pool[p]->hiding>0)
@@ -24618,7 +24820,7 @@ void advanceday(char &clearformess,char canseethings)
 		if((pool[p]->flag & CREATUREFLAG_MISSING)&&
 			!(pool[p]->flag & CREATUREFLAG_KIDNAPPED))
 			{
-			if(random(10)+2<pool[p]->joindays)
+			if(LCSrandom(10)+2<pool[p]->joindays)
 				{
 				pool[p]->flag|=CREATUREFLAG_KIDNAPPED;
 
@@ -24637,7 +24839,7 @@ void advanceday(char &clearformess,char canseethings)
 			continue;
 			}
 
-		for(s=0;s<SKILLNUM;s++)
+		for(int s=0;s<SKILLNUM;s++)
 			{
 			if(pool[p]->skill_ip[s]>=100)
 				{
@@ -24679,7 +24881,7 @@ void cleangonesquads(void)
 			//SQUAD LOOT WILL BE DESTROYED
 			if(activesquad==squad[sq])activesquad=NULL;
 			delete squad[sq];
-			squad.verase(sq);
+			squad.erase(squad.begin() + sq);
 			}
 		//OTHERWISE YOU CAN TAKE ITS MONEY
 		else
@@ -24692,7 +24894,7 @@ void cleangonesquads(void)
 					stat_funds+=squad[sq]->loot[l]->money;
 					moneygained_thievery+=squad[sq]->loot[l]->money;
 					delete squad[sq]->loot[l];
-					squad[sq]->loot.verase(l);
+					squad[sq]->loot.erase(squad[sq]->loot.begin() + l);
 					}
 				}
 			}
@@ -24926,7 +25128,7 @@ void review_mode(short mode)
 			}
 
 		int y=2;
-		for(p=page*19;p<temppool.size()&&p<page*19+19;p++)
+		for(int p=page*19;p<temppool.size()&&p<page*19+19;p++)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(y,0);
@@ -25319,7 +25521,7 @@ void hospital(int loc)
 								if(v!=-1)
 									{
 									delete vehicle[v];
-									vehicle.verase(v);
+									vehicle.erase(vehicle.begin() + v);
 									}
 								}
 							}
@@ -25891,6 +26093,7 @@ void pawnshop(int loc)
 	short in_tools=0;
 	short in_gunshop=0;
 	short in_fence=0;
+	int l;
 
 	locatesquad(activesquad,loc);
 
@@ -26094,7 +26297,7 @@ void pawnshop(int loc)
 					memset(fenceclip,0,CLIPNUM*sizeof(int));
 					memset(fenceloot,0,LOOTNUM*sizeof(int));
 
-					for(int l=activesquad->loot.size()-1;l>=0;l--)
+					for(l=activesquad->loot.size()-1;l>=0;l--)
 						{
 						switch(activesquad->loot[l]->type)
 							{
@@ -26165,7 +26368,7 @@ void pawnshop(int loc)
 									if(activesquad->loot[l]->number==0)
 										{
 										delete activesquad->loot[l];
-										activesquad->loot.verase(l);
+										activesquad->loot.erase(activesquad->loot.begin() + l);
 										}
 									}
 								break;
@@ -26183,7 +26386,7 @@ void pawnshop(int loc)
 									if(activesquad->loot[l]->number==0)
 										{
 										delete activesquad->loot[l];
-										activesquad->loot.verase(l);
+										activesquad->loot.erase(activesquad->loot.begin() + l);
 										}
 									}
 								break;
@@ -26199,7 +26402,7 @@ void pawnshop(int loc)
 									if(activesquad->loot[l]->number==0)
 										{
 										delete activesquad->loot[l];
-										activesquad->loot.verase(l);
+										activesquad->loot.erase(activesquad->loot.begin() + l);
 										}
 									}
 								break;
@@ -26215,7 +26418,7 @@ void pawnshop(int loc)
 									if(activesquad->loot[l]->number==0)
 										{
 										delete activesquad->loot[l];
-										activesquad->loot.verase(l);
+										activesquad->loot.erase(activesquad->loot.begin() + l);
 										}
 									}
 								break;
@@ -26705,7 +26908,7 @@ void moveloot(vector<itemst *> &dest,vector<itemst *> &source)
 			if(source[l]->number<=0)
 				{
 				delete source[l];
-				source.verase(l);
+				source.erase(source.begin() + l);
 				}
 			}
 		}
@@ -26767,7 +26970,7 @@ void activate(void)
 		addstr("ACTIVITY");
 
 		int y=2;
-		for(p=page*19;p<temppool.size()&&p<page*19+19;p++)
+		for(int p=page*19;p<temppool.size()&&p<page*19+19;p++)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(y,0);
@@ -26937,7 +27140,7 @@ void activatebulk(void)
 		addstr("8 - Stealing Cars.");
 
 		int y=2;
-		for(p=page*19;p<temppool.size()&&p<page*19+19;p++)
+		for(int p=page*19;p<temppool.size()&&p<page*19+19;p++)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(y,0);
@@ -27364,7 +27567,7 @@ void select_tendhostage(creaturest *cr)
 		addstr("DAYS IN CAPTIVITY");
 
 		int y=2;
-		for(p=page*19;p<temppool.size()&&p<page*19+19;p++)
+		for(int p=page*19;p<temppool.size()&&p<page*19+19;p++)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(y,0);
@@ -27624,7 +27827,8 @@ void printcreatureinfo(creaturest *cr)
 		{
 		printed=0;
 
-		unsigned long max=0,maxs=-1;
+		unsigned long max=0;
+		long maxs=-1;
 		for(int s=0;s<SKILLNUM;s++)
 			{
 			if(cr->skill[s]>max && !used[s])
@@ -27670,7 +27874,7 @@ void printcreatureinfo(creaturest *cr)
 
 	if(woundsum>0)
 		{
-		for(w=0;w<BODYPARTNUM;w++)
+		for(int w=0;w<BODYPARTNUM;w++)
 			{
 			if(cr->wound[w] & WOUND_BLEEDING)set_color(COLOR_RED,COLOR_BLACK,1);
 			else set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -27735,13 +27939,14 @@ int getpoolcreature(long id)
 void tendhostage(creaturest *cr,char &clearformess)
 {
 	vector<creaturest *> temppool;
+	int p;
 
 	long hfunds=0;
 	char notender=1;
 	char terminatehostage=0;
 	creaturest *killer=NULL;
 
-	for(int p=0;p<pool.size();p++)
+	for(p=0;p<pool.size();p++)
 		{
 		if(!pool[p]->alive)continue;
 		if(terminatehostage)break;
@@ -27768,7 +27973,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 		{
 		//CHECK FOR HOSTAGE ESCAPE
 		if(notender&&
-			random(200)<cr->attval(ATTRIBUTE_INTELLIGENCE)+
+			LCSrandom(200)<cr->attval(ATTRIBUTE_INTELLIGENCE)+
 			cr->attval(ATTRIBUTE_AGILITY)+
 			cr->attval(ATTRIBUTE_STRENGTH)&&
 			cr->joindays>=2)
@@ -27791,7 +27996,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 					getch();
 
 					delete pool[p];
-					pool.verase(p);
+					pool.erase(pool.begin() + p);
 					break;
 					}
 				}
@@ -27824,8 +28029,8 @@ void tendhostage(creaturest *cr,char &clearformess)
 
 	if(terminatehostage)
 		{
-		if(random(10)<killer->juice&&
-			random(9)+1>=killer->attval(ATTRIBUTE_HEART,0))
+		if(LCSrandom(10)<killer->juice&&
+			LCSrandom(9)+1>=killer->attval(ATTRIBUTE_HEART,0))
 			{
 			set_color(COLOR_MAGENTA,COLOR_BLACK,0);
 			cr->alive=0;
@@ -27835,7 +28040,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 			addstr(" executes ");
 			addstr(cr->name);
 			addstr(" by ");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:addstr("strangling it to death.");break;
 				case 1:addstr("beating it to death.");break;
@@ -27852,14 +28057,14 @@ void tendhostage(creaturest *cr,char &clearformess)
 				addstr(" feels sick to the stomach afterward and ");
 				killer->att[ATTRIBUTE_HEART]--;
 				move(y,0);y++;
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:addstr("throws up in a trash can.");break;
 					case 1:addstr("gets drunk, eventually falling asleep.");break;
 					case 2:addstr("curls up in a ball, crying softly.");break;
 					}
 				}
-			else if(!random(3))
+			else if(!LCSrandom(3))
 				{
 				set_color(COLOR_CYAN,COLOR_BLACK,1);
 				move(y,0);y++;
@@ -27890,11 +28095,11 @@ void tendhostage(creaturest *cr,char &clearformess)
 	if(hfunds==0)
 		{
 		//BEAT IT UP OR TALK IT DOWN
-		if(!random(2))
+		if(!LCSrandom(2))
 			{
 			int maxattack=0;
 
-			for(int p=0;p<temppool.size();p++)
+			for(p=0;p<temppool.size();p++)
 				{
 				if(temppool[p]!=NULL)
 					{
@@ -27932,14 +28137,14 @@ void tendhostage(creaturest *cr,char &clearformess)
 
 			if(goodp.size()>0)
 				{
-				creaturest *a=temppool[goodp[random(goodp.size())]];
+				creaturest *a=temppool[goodp[LCSrandom(goodp.size())]];
 
-				long aroll=random(a->attval(ATTRIBUTE_CHARISMA)+
+				long aroll=LCSrandom(a->attval(ATTRIBUTE_CHARISMA)+
 					a->attval(ATTRIBUTE_HEART)+
-					a->skill[SKILL_PERSUASION]+1)+random(10)+temppool.size();
-				long troll=random(cr->attval(ATTRIBUTE_CHARISMA)+
+					a->skill[SKILL_PERSUASION]+1)+LCSrandom(10)+temppool.size();
+				long troll=LCSrandom(cr->attval(ATTRIBUTE_CHARISMA)+
 					cr->attval(ATTRIBUTE_WISDOM)+
-					cr->skill[SKILL_PERSUASION]+1)+random(10);
+					cr->skill[SKILL_PERSUASION]+1)+LCSrandom(10);
 
 				move(y,0);
 				addstr(a->name);
@@ -27956,7 +28161,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 					if(cr->att[ATTRIBUTE_WISDOM]>1)
 						{
 						cr->att[ATTRIBUTE_WISDOM]--;
-						if(random(11)>(cr->att[ATTRIBUTE_WISDOM]*5)-cr->joindays)turned=1;
+						if(LCSrandom(11)>(cr->att[ATTRIBUTE_WISDOM]*5)-cr->joindays)turned=1;
 						}
 					else turned=1;
 
@@ -28024,14 +28229,14 @@ void tendhostage(creaturest *cr,char &clearformess)
 			refresh();
 			getch();
 
-			long forceroll=random(((long)temppool.size())*10+1);
+			long forceroll=LCSrandom(((long)temppool.size())*10+1);
 
 			if(forceroll>=cr->attval(ATTRIBUTE_HEALTH))
 				{
 				if(cr->att[ATTRIBUTE_WISDOM]>1)
 					{
 					cr->att[ATTRIBUTE_WISDOM]--;
-					if(random(11)>(cr->att[ATTRIBUTE_WISDOM]*5)-cr->joindays)turned=1;
+					if(LCSrandom(11)>(cr->att[ATTRIBUTE_WISDOM]*5)-cr->joindays)turned=1;
 					}
 				else turned=1;
 
@@ -28040,12 +28245,12 @@ void tendhostage(creaturest *cr,char &clearformess)
 				addstr("'s resolve weakens...");
 				y++;
 
-				if(forceroll>=random(cr->attval(ATTRIBUTE_HEALTH)*5+1))
+				if(forceroll>=LCSrandom(cr->attval(ATTRIBUTE_HEALTH)*5+1))
 					{
 					refresh();
 					getch();
 
-					if(random(5)&&cr->att[ATTRIBUTE_HEALTH]>1)
+					if(LCSrandom(5)&&cr->att[ATTRIBUTE_HEALTH]>1)
 						{
 						cr->att[ATTRIBUTE_HEALTH]--;
 						move(y,0);
@@ -28096,14 +28301,14 @@ void tendhostage(creaturest *cr,char &clearformess)
 			}
 		maxattack+=hfunds/20+temppool.size();
 
-		long aroll=random(maxattack)+random(10);
-		long troll=random(cr->attval(ATTRIBUTE_WISDOM)*2)+random(15);
+		long aroll=LCSrandom(maxattack)+LCSrandom(10);
+		long troll=LCSrandom(cr->attval(ATTRIBUTE_WISDOM)*2)+LCSrandom(15);
 
 		if(hfunds<=20)
 			{
 			move(y,0);
 			addstr(cr->name);
-			switch(random(2))
+			switch(LCSrandom(2))
 				{
 				case 0:addstr(" is forced to listen to FM radio in lieu of sleep");break;
 				case 1:addstr(" is forced to watch network news tapes in lieu of sleep");break;
@@ -28118,7 +28323,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 			{
 			move(y,0);
 			addstr(cr->name);
-			switch(random(2))
+			switch(LCSrandom(2))
 				{
 				case 0:
 					addstr(" is forced to ingest psychotropic drugs.");
@@ -28142,7 +28347,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 			y++;
 			move(y,0);
 			addstr("and a silent video of ");
-			switch(random(3))
+			switch(LCSrandom(3))
 				{
 				case 0:addstr("atrocities in Cambodia");break;
 				case 1:addstr("chickens in a factory farm");break;
@@ -28165,7 +28370,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 			y++;
 			move(y,0);
 			addstr("only to find upon illumination of the room that");
-			switch(random(3))
+			switch(LCSrandom(3))
 				{
 				case 0:
 					addstr(" the walls have been");y++;move(y,0);
@@ -28193,7 +28398,7 @@ void tendhostage(creaturest *cr,char &clearformess)
 			if(cr->att[ATTRIBUTE_WISDOM]>1)
 				{
 				cr->att[ATTRIBUTE_WISDOM]--;
-				if(random(11)>(cr->att[ATTRIBUTE_WISDOM]*5)-cr->joindays)turned=1;
+				if(LCSrandom(11)>(cr->att[ATTRIBUTE_WISDOM]*5)-cr->joindays)turned=1;
 				}
 			else turned=1;
 
@@ -28335,7 +28540,7 @@ void bloodblast(armorst &armor)
 		if(activesquad->squad[p]==NULL)continue;
 		if(activesquad->squad[p]->armor.type!=ARMOR_NONE)
 			{
-			if(!random(2))activesquad->squad[p]->armor.flag|=ARMORFLAG_BLOODY;
+			if(!LCSrandom(2))activesquad->squad[p]->armor.flag|=ARMORFLAG_BLOODY;
 			}
 		}
 
@@ -28344,7 +28549,7 @@ void bloodblast(armorst &armor)
 		if(!encounter[e].exists)continue;
 		if(encounter[e].armor.type!=ARMOR_NONE)
 			{
-			if(!random(2))encounter[e].armor.flag|=ARMORFLAG_BLOODY;
+			if(!LCSrandom(2))encounter[e].armor.flag|=ARMORFLAG_BLOODY;
 			}
 		}
 
@@ -28389,7 +28594,7 @@ int getrandomcreaturetype(int cr[CREATURENUM])
 
 	if(sum>0)
 		{
-		int roll=random(sum);
+		int roll=LCSrandom(sum);
 		int sel=0;
 		while(roll>=0){roll-=cr[sel];sel++;}
 		return sel-1;
@@ -28576,13 +28781,13 @@ void repairarmor(creaturest &cr,char &clearformess)
 		long dif=(armor_makedifficulty(it->type,&cr)>>1);
 		cr.skill_ip[SKILL_GARMENTMAKING]+=dif+1;
 
-		if((random(10)<dif||random(10)<dif)&&it->quality!='4'&&
+		if((LCSrandom(10)<dif||LCSrandom(10)<dif)&&it->quality!='4'&&
 			(it->flag & ARMORFLAG_DAMAGED))
 			{
 			addstr(" but it is not quite the same.");
 			it->quality++;
-			if((random(10)<dif||random(10)<dif)&&it->quality!='4')it->quality++;
-			if((random(10)<dif||random(10)<dif)&&it->quality!='4')it->quality++;
+			if((LCSrandom(10)<dif||LCSrandom(10)<dif)&&it->quality!='4')it->quality++;
+			if((LCSrandom(10)<dif||LCSrandom(10)<dif)&&it->quality!='4')it->quality++;
 			}
 		else addstr(".");
 
@@ -28629,7 +28834,7 @@ void makearmor(creaturest &cr,char &clearformess)
 					squad[sq]->loot[l]->loottype==LOOT_FINECLOTH)
 					{
 					delete squad[sq]->loot[l];
-					squad[sq]->loot.verase(l);
+					squad[sq]->loot.erase(squad[sq]->loot.begin() + l);
 					foundcloth=1;
 					break;
 					}
@@ -28643,7 +28848,7 @@ void makearmor(creaturest &cr,char &clearformess)
 					location[cr.location]->loot[l]->loottype==LOOT_FINECLOTH)
 					{
 					delete location[cr.location]->loot[l];
-					location[cr.location]->loot.verase(l);
+					location[cr.location]->loot.erase(location[cr.location]->loot.begin() + l);
 					foundcloth=1;
 					break;
 					}
@@ -28690,13 +28895,13 @@ void makearmor(creaturest &cr,char &clearformess)
 				it->armor.flag=0;
 			location[cr.location]->loot.push_back(it);
 
-			if(random(10)<dif||random(10)<dif)
+			if(LCSrandom(10)<dif||LCSrandom(10)<dif)
 				{
 				it->armor.quality='2';
-				if(random(10)<dif||random(10)<dif)
+				if(LCSrandom(10)<dif||LCSrandom(10)<dif)
 					{
 					it->armor.quality='3';
-					if(random(10)<dif||random(10)<dif)
+					if(LCSrandom(10)<dif||LCSrandom(10)<dif)
 						{
 						it->armor.quality='4';
 						}
@@ -28734,6 +28939,7 @@ void makearmor(creaturest &cr,char &clearformess)
 
 void funds_and_trouble(char &clearformess)
 {
+	int s;
 	//FIND A POLICE STATION
 	long ps=-1;
 	for(long l=0;l<location.size();l++)
@@ -28820,31 +29026,31 @@ void funds_and_trouble(char &clearformess)
 	long money;
 
 	//SOLICITORS
-	for(int s=0;s<solicit.size();s++)
+	for(s=0;s<solicit.size();s++)
 		{
-		money=random(solicit[s]->skill[SKILL_PERSUASION]+
+		money=LCSrandom(solicit[s]->skill[SKILL_PERSUASION]+
 			solicit[s]->attval(ATTRIBUTE_CHARISMA)+
 			solicit[s]->attval(ATTRIBUTE_HEART)+1);
-		if(random(100)>attitude[VIEW_LIBERALCRIMESQUADPOS])money=0;
+		if(LCSrandom(100)>attitude[VIEW_LIBERALCRIMESQUADPOS])money=0;
 		funds+=money;
 		stat_funds+=money;
 		moneygained_donate+=money;
-		if(solicit[s]->skill[SKILL_PERSUASION]<3)solicit[s]->skill_ip[SKILL_PERSUASION]+=random(2)+1;
+		if(solicit[s]->skill[SKILL_PERSUASION]<3)solicit[s]->skill_ip[SKILL_PERSUASION]+=LCSrandom(2)+1;
 		}
 
 	//BROWNIES
 	long dodgelawroll;
 	for(s=0;s<brownies.size();s++)
 		{
-		money=random(brownies[s]->skill[SKILL_PERSUASION]*5+
+		money=LCSrandom(brownies[s]->skill[SKILL_PERSUASION]*5+
 			brownies[s]->attval(ATTRIBUTE_CHARISMA)*5+
 			brownies[s]->attval(ATTRIBUTE_INTELLIGENCE)*5+1);
 		funds+=money;
 		stat_funds+=money;
 		moneygained_brownies+=money;
-		brownies[s]->skill_ip[SKILL_PERSUASION]+=random(2)+1;
+		brownies[s]->skill_ip[SKILL_PERSUASION]+=LCSrandom(2)+1;
 
-		dodgelawroll=random(brownies[s]->skill[SKILL_PERSUASION]+
+		dodgelawroll=LCSrandom(brownies[s]->skill[SKILL_PERSUASION]+
 			brownies[s]->skill[SKILL_DISGUISE]+
 			brownies[s]->attval(ATTRIBUTE_CHARISMA)+
 			brownies[s]->attval(ATTRIBUTE_AGILITY)+
@@ -28884,11 +29090,11 @@ void funds_and_trouble(char &clearformess)
 			{
 			hskill+=hack[h]->skill[SKILL_COMPUTERS];
 			hskill+=hack[h]->attval(ATTRIBUTE_INTELLIGENCE);
-			hack[h]->skill_ip[SKILL_COMPUTERS]+=random(2)+1;
+			hack[h]->skill_ip[SKILL_COMPUTERS]+=LCSrandom(2)+1;
 			}
 
 		//MAJOR HACKING EVENT
-		if(random(10000)<=hfund+hskill*20)
+		if(LCSrandom(10000)<=hfund+hskill*20)
 			{
 			if(clearformess)erase();
 			else
@@ -28907,7 +29113,7 @@ void funds_and_trouble(char &clearformess)
 
 			long juiceval=0;
 
-			switch(random(1))
+			switch(LCSrandom(1))
 				{
 				case 0:
 					addstr("pilfered files from a Corporate server.");
@@ -28924,7 +29130,7 @@ void funds_and_trouble(char &clearformess)
 					break;
 				}
 
-			if(trackdif>random(hskill+1)+random(10))
+			if(trackdif>LCSrandom(hskill+1)+LCSrandom(10))
 				{
 				for(int h=0;h<hack.size();h++)
 					{
@@ -28942,7 +29148,7 @@ void funds_and_trouble(char &clearformess)
 			getch();
 			}
 		//MINOR HACKING EVENT
-		else if(random(1000)<=hfund+hskill*20)
+		else if(LCSrandom(1000)<=hfund+hskill*20)
 			{
 			if(clearformess)erase();
 			else
@@ -28961,7 +29167,7 @@ void funds_and_trouble(char &clearformess)
 
 			long juiceval=0;
 
-			switch(random(2))
+			switch(LCSrandom(2))
 				{
 				case 0:
 					addstr("launched a denial of service attack on a Corporate site.");
@@ -28975,7 +29181,7 @@ void funds_and_trouble(char &clearformess)
 					{
 					addstr("stolen some credit card numbers, netting $");
 					char num[20];
-					long fundgain=random(1001)+1000;
+					long fundgain=LCSrandom(1001)+1000;
 					funds+=fundgain;
 					stat_funds+=fundgain;
 					moneygained_ccfraud+=fundgain;
@@ -28990,7 +29196,7 @@ void funds_and_trouble(char &clearformess)
 					}
 				}
 
-			if(trackdif>random(hskill+1)+random(10))
+			if(trackdif>LCSrandom(hskill+1)+LCSrandom(10))
 				{
 				for(int h=0;h<hack.size();h++)
 					{
@@ -29021,7 +29227,7 @@ void funds_and_trouble(char &clearformess)
 				long fundgain=0;
 				char caught=0;
 
-				if(!random(4))
+				if(!LCSrandom(4))
 					{
 					if(clearformess)erase();
 					else
@@ -29033,9 +29239,9 @@ void funds_and_trouble(char &clearformess)
 					move(8,1);
 					addstr(trouble[t]->name);
 					addstr(" gives it up for $");
-					if(trouble[t]->juice<=-50)fundgain=random(21)+20;
-					else if(trouble[t]->juice<=-50)fundgain=random(21)+20;
-					else fundgain=random(21)+20;
+					if(trouble[t]->juice<=-50)fundgain=LCSrandom(21)+20;
+					else if(trouble[t]->juice<=-50)fundgain=LCSrandom(21)+20;
+					else fundgain=LCSrandom(21)+20;
 					itoa(fundgain,num,10);
 					addstr(num);
 					addstr("!");
@@ -29046,7 +29252,7 @@ void funds_and_trouble(char &clearformess)
 					getch();
 
 
-					if(!random(4))
+					if(!LCSrandom(4))
 						{
 						if(clearformess)erase();
 						else
@@ -29086,7 +29292,7 @@ void funds_and_trouble(char &clearformess)
 					set_color(COLOR_WHITE,COLOR_BLACK,1);
 					move(8,1);
 					addstr(trouble[t]->name);
-					switch(random(2))
+					switch(LCSrandom(2))
 						{
 						case 0:addstr(" made some money playing shell games.");break;
 						case 1:addstr(" found some money on the ground.");break;
@@ -29095,7 +29301,7 @@ void funds_and_trouble(char &clearformess)
 					refresh();
 					getch();
 
-					fundgain=random(11)+10;
+					fundgain=LCSrandom(11)+10;
 					}
 
 				if(!caught)
@@ -29105,7 +29311,7 @@ void funds_and_trouble(char &clearformess)
 					moneygained_hustling+=fundgain;
 					}
 
-				trouble.verase(t);
+				trouble.erase(trouble.begin() + t);
 				}
 			}
 
@@ -29141,16 +29347,16 @@ void funds_and_trouble(char &clearformess)
 			power+=tfund/10;
 
 			long mod=1;
-			if(random(100)<power)mod++;
-			if(random(100)<power)mod++;
-			if(random(1000)<power)mod++;
-			if(random(1000)<power)mod++;
-			if(random(10000)<power)mod++;
-			if(random(10000)<power)mod++;
+			if(LCSrandom(100)<power)mod++;
+			if(LCSrandom(100)<power)mod++;
+			if(LCSrandom(1000)<power)mod++;
+			if(LCSrandom(1000)<power)mod++;
+			if(LCSrandom(10000)<power)mod++;
+			if(LCSrandom(10000)<power)mod++;
 
 			do
 				{
-				switch(random(8))
+				switch(LCSrandom(8))
 					{
 					case 0:
 						addstr("run around uptown splashing paint on fur coats!");
@@ -29269,12 +29475,12 @@ void funds_and_trouble(char &clearformess)
 				{
 				for(int t=0;t<trouble.size();t++)
 					{
-					dodgelawroll=random(trouble[t]->skill[SKILL_PERSUASION]+
+					dodgelawroll=LCSrandom(trouble[t]->skill[SKILL_PERSUASION]+
 						trouble[t]->skill[SKILL_DISGUISE]+
 						trouble[t]->attval(ATTRIBUTE_CHARISMA)+
 						trouble[t]->attval(ATTRIBUTE_AGILITY)+
 						trouble[t]->attval(ATTRIBUTE_INTELLIGENCE)+1)+
-						random(tfund/100+1);
+						LCSrandom(tfund/100+1);
 
 					if(dodgelawroll==0)
 						{
@@ -29284,7 +29490,7 @@ void funds_and_trouble(char &clearformess)
 							makedelimiter(8,0);
 							}
 
-						if(random(2))
+						if(LCSrandom(2))
 							{
 							set_color(COLOR_WHITE,COLOR_BLACK,1);
 							move(8,1);
@@ -29329,7 +29535,7 @@ void funds_and_trouble(char &clearformess)
 							refresh();
 							getch();
 
-							if(trouble[t]->juice>=100||random(100)<trouble[t]->juice)
+							if(trouble[t]->juice>=100||LCSrandom(100)<trouble[t]->juice)
 								{
 								addjuice(*trouble[t],-5);
 								if(trouble[t]->blood>50)trouble[t]->blood=50;
@@ -29339,9 +29545,9 @@ void funds_and_trouble(char &clearformess)
 								addjuice(*trouble[t],-10);
 								if(trouble[t]->blood>10)trouble[t]->blood=10;
 
-								if(!random(5))
+								if(!LCSrandom(5))
 									{
-									switch(random(15))
+									switch(LCSrandom(15))
 										{
 										case 0:
 											if(trouble[t]->special[SPECIALWOUND_LOWERSPINE]==1)
@@ -29396,7 +29602,7 @@ void funds_and_trouble(char &clearformess)
 											{
 											if(trouble[t]->special[SPECIALWOUND_RIBS]>0)
 												{
-												int ribminus=random(RIBNUM)+1;
+												int ribminus=LCSrandom(RIBNUM)+1;
 												if(ribminus>trouble[t]->special[SPECIALWOUND_RIBS])ribminus=trouble[t]->special[SPECIALWOUND_RIBS];
 												char num[20];
 												itoa(ribminus,num,10);
@@ -29459,7 +29665,7 @@ void funds_and_trouble(char &clearformess)
 
 			//BURY
 			delete pool[p];
-			pool.verase(p);
+			pool.erase(pool.begin() + p);
 
 			if(!caught)
 				{
@@ -29467,7 +29673,7 @@ void funds_and_trouble(char &clearformess)
 
 				for(int b=0;b<bury.size();b++)
 					{
-					ndodgelawroll=random(bury[b]->skill[SKILL_PERSUASION]+
+					ndodgelawroll=LCSrandom(bury[b]->skill[SKILL_PERSUASION]+
 						bury[b]->skill[SKILL_DISGUISE]+
 						bury[b]->attval(ATTRIBUTE_CHARISMA)+
 						bury[b]->attval(ATTRIBUTE_AGILITY)+
@@ -30012,7 +30218,7 @@ void getwheelchair(creaturest &cr,char &clearformess)
 		makedelimiter(8,0);
 		}
 
-	if(random(2))
+	if(LCSrandom(2))
 		{
 		set_color(COLOR_WHITE,COLOR_BLACK,1);
 		move(8,1);
@@ -30049,12 +30255,12 @@ char stealcar(creaturest &cr,char &clearformess)
 		int old=cartype;
 
 		//ROUGH DAY
-		if(random(10)<diff)
+		if(LCSrandom(10)<diff)
 			{
 			do
 				{
-				cartype=random(VEHICLENUM);
-				if(random(10)<difficulty_carfind(cartype))cartype=old;
+				cartype=LCSrandom(VEHICLENUM);
+				if(LCSrandom(10)<difficulty_carfind(cartype))cartype=old;
 				}while(cartype==old);
 			}
 
@@ -30141,9 +30347,9 @@ char stealcar(creaturest &cr,char &clearformess)
 		char alarmon=0;
 
 		char sensealarm=0;
-		if(random(100)<sensealarmchance(cartype))sensealarm=1;
+		if(LCSrandom(100)<sensealarmchance(cartype))sensealarm=1;
 		char touchalarm=0;
-		if(random(100)<touchalarmchance(cartype))touchalarm=1;
+		if(LCSrandom(100)<touchalarmchance(cartype))touchalarm=1;
 
 		do
 			{
@@ -30231,7 +30437,7 @@ char stealcar(creaturest &cr,char &clearformess)
 
 				cr.skill_ip[SKILL_SECURITY]+=2;
 
-				if(random(11)<attack)
+				if(LCSrandom(11)<attack)
 					{
 					set_color(COLOR_WHITE,COLOR_BLACK,1);
 					move(16,0);
@@ -30256,7 +30462,7 @@ char stealcar(creaturest &cr,char &clearformess)
 				int attack=cr.attval(ATTRIBUTE_STRENGTH)+
 					bashstrengthmod(cr.weapon.type);
 
-				if(random(11)<attack)
+				if(LCSrandom(11)<attack)
 					{
 					set_color(COLOR_WHITE,COLOR_BLACK,1);
 					move(16,0);
@@ -30309,7 +30515,7 @@ char stealcar(creaturest &cr,char &clearformess)
 				}
 
 			//NOTICE CHECK
-			if(!random(50)||(!random(5)&&alarmon))
+			if(!LCSrandom(50)||(!LCSrandom(5)&&alarmon))
 				{
 				set_color(COLOR_RED,COLOR_BLACK,1);
 				move(y,0);y++;
@@ -30341,7 +30547,7 @@ char stealcar(creaturest &cr,char &clearformess)
 
 		//START CAR
 		char keys_in_car=0;
-		if(!random(5))keys_in_car=1;
+		if(!LCSrandom(5))keys_in_car=1;
 
 		do
 			{
@@ -30411,7 +30617,7 @@ char stealcar(creaturest &cr,char &clearformess)
 
 				cr.skill_ip[SKILL_SECURITY]+=2;
 
-				if(random(11)<attack)
+				if(LCSrandom(11)<attack)
 					{
 					set_color(COLOR_WHITE,COLOR_BLACK,1);
 					move(y,0);y++;
@@ -30435,7 +30641,7 @@ char stealcar(creaturest &cr,char &clearformess)
 				{
 				int attack=cr.attval(ATTRIBUTE_INTELLIGENCE);
 
-				if(random(11)<attack&&keys_in_car)
+				if(LCSrandom(11)<attack&&keys_in_car)
 					{
 					set_color(COLOR_GREEN,COLOR_BLACK,1);
 					move(y,0);y++;
@@ -30443,7 +30649,7 @@ char stealcar(creaturest &cr,char &clearformess)
 					else addstr("Holy shit!  ");
 					addstr(cr.name);
 					addstr(" found the keys ");
-					switch(random(5))
+					switch(LCSrandom(5))
 						{
 						case 0:addstr("in the ignition.  Damn.");break;
 						case 1:addstr("under the front seat");break;
@@ -30463,7 +30669,7 @@ char stealcar(creaturest &cr,char &clearformess)
 					addstr(cr.name);
 					addstr(": <rummaging> ");
 					set_color(COLOR_GREEN,COLOR_BLACK,1);
-					switch(random(5))
+					switch(LCSrandom(5))
 						{
 						case 0:addstr("They've gotta be in here somewhere...");break;
 						case 1:
@@ -30482,7 +30688,7 @@ char stealcar(creaturest &cr,char &clearformess)
 				}
 
 			//NOTICE CHECK
-			if(!started&&(!random(50)||(!random(5)&&alarmon)))
+			if(!started&&(!LCSrandom(50)||(!LCSrandom(5)&&alarmon)))
 				{
 				set_color(COLOR_RED,COLOR_BLACK,1);
 				move(y,0);y++;
@@ -30519,7 +30725,7 @@ char stealcar(creaturest &cr,char &clearformess)
 
 		chaseseq.clean();
 		chaseseq.location=0;
-		int chaselev=!random(4);
+		int chaselev=!LCSrandom(4);
 		if(chaselev>0)
 			{
 			chaselev=1;
@@ -30748,7 +30954,7 @@ char maskselect(creaturest *cr,short &mask)
 			}
 		if(c=='z')
 			{
-			mask=random(MASKNUM);
+			mask=LCSrandom(MASKNUM);
 			return 1;
 			}
 
@@ -30824,31 +31030,31 @@ void vehiclest::init(int t)
 	switch(t)
 		{
 		case VEHICLE_JEEP:
-			myear=year+1-random(41);
+			myear=year+1-LCSrandom(41);
 			break;
 		case VEHICLE_VAN:
-			myear=1969+random(6);
+			myear=1969+LCSrandom(6);
 			break;
 		case VEHICLE_STATIONWAGON:
-			myear=year+1-random(41);
+			myear=year+1-LCSrandom(41);
 			break;
 		case VEHICLE_SPORTSCAR:
-			myear=year+1-random(21);
+			myear=year+1-LCSrandom(21);
 			break;
 		case VEHICLE_BUG:
-			myear=1969+random(6);
+			myear=1969+LCSrandom(6);
 			break;
 		case VEHICLE_PICKUP:
-			myear=year+1-random(41);
+			myear=year+1-LCSrandom(41);
 			break;
 		case VEHICLE_POLICECAR:
-			myear=year+1-random(21);
+			myear=year+1-LCSrandom(21);
 			break;
 		case VEHICLE_TAXICAB:
-			myear=year+1-random(41);
+			myear=year+1-LCSrandom(41);
 			break;
 		case VEHICLE_SUV:
-			myear=1995+random(year-1995+1);
+			myear=1995+LCSrandom(year-1995+1);
 			break;
 		}
 	switch(t)
@@ -30869,7 +31075,7 @@ void vehiclest::init(int t)
 		case VEHICLE_BUG:
 		case VEHICLE_PICKUP:
 		case VEHICLE_SUV:
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:color=VEHICLECOLOR_RED;break;
 				case 1:color=VEHICLECOLOR_WHITE;break;
@@ -30955,6 +31161,7 @@ long bashstrengthmod(int t)
 
 void setvehicles(void)
 {
+	int p, l;
 	if(activesquad==NULL)return;
 
 	int page=0;
@@ -30972,10 +31179,10 @@ void setvehicles(void)
 		int x=1,y=10;
 		char str[200],str2[200];
 
-		for(int l=page*18;l<vehicle.size()&&l<page*18+18;l++)
+		for(l=page*18;l<vehicle.size()&&l<page*18+18;l++)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
-			for(int p=0;p<6;p++)
+			for(p=0;p<6;p++)
 				{
 				if(activesquad->squad[p]==NULL)continue;
 				if(activesquad->squad[p]->alive&&
@@ -31135,9 +31342,10 @@ long id_getcar(long id)
 
 void squadgrab_immobile(char dead)
 {
+	int p;
 	//DRAGGING PEOPLE OUT IF POSSIBLE
 	int hostslots=0;
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]!=NULL)
 			{
@@ -31197,7 +31405,7 @@ void squadgrab_immobile(char dead)
 							if(pool[pl]==activesquad->squad[p])
 								{
 								delete pool[pl];
-								pool.verase(pl);
+								pool.erase(pool.begin() + pl);
 								break;
 								}
 							}
@@ -31318,7 +31526,7 @@ void freehostage(creaturest &cr,char situation)
 					{
 					removesquadinfo(*pool[pl]);
 					delete pool[pl];
-					pool.verase(pl);
+					pool.erase(pool.begin() + pl);
 					break;
 					}
 				}
@@ -31370,6 +31578,8 @@ void capturecreature(creaturest &t)
 
 char chasesequence(void)
 {
+	int p = 0;
+
 	reloadparty();
 
 	//NOTE: THIS FUNCTION RETURNS 1 IF ANYBODY ESCAPES
@@ -31378,6 +31588,7 @@ char chasesequence(void)
 
 	//BAIL IF NO CHASERS
 	int chasenum=0;
+	int v2=0;
 	for(int e=0;e<ENCMAX;e++)
 		{
 		if(encounter[e].exists)chasenum++;
@@ -31385,7 +31596,7 @@ char chasesequence(void)
 	if(chasenum==0)return 1;
 
 	chaseseq.friendcar.clear();
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]==NULL)continue;
 
@@ -31394,7 +31605,7 @@ char chasesequence(void)
 			long v=id_getcar(activesquad->squad[p]->carid);
 			if(v!=-1)
 				{
-				for(int v2=0;v2<chaseseq.friendcar.size();v2++)
+				for(v2=0;v2<chaseseq.friendcar.size();v2++)
 					{
 					if(chaseseq.friendcar[v2]->id==vehicle[v]->id)break;
 					}
@@ -31425,7 +31636,7 @@ char chasesequence(void)
 		{
 		int partysize=0;
 		int partyalive=0;
-		for(int p=0;p<6;p++)
+		for(p=0;p<6;p++)
 			{
 			if(activesquad->squad[p]!=NULL)partysize++;
 			else continue;
@@ -31520,7 +31731,7 @@ char chasesequence(void)
 		if(partyalive==0&&c=='c')
 			{
 			//DESTROY ALL CARS BROUGHT ALONG WITH PARTY
-			for(int p=0;p<6;p++)
+			for(p=0;p<6;p++)
 				{
 				if(activesquad->squad[p]==NULL)continue;
 				if(activesquad->squad[p]->carid!=-1)
@@ -31529,7 +31740,7 @@ char chasesequence(void)
 					if(v!=-1)
 						{
 						delete vehicle[v];
-						vehicle.verase(v);
+						vehicle.erase(vehicle.begin() + v);
 						}
 					}
 				}
@@ -31543,7 +31754,7 @@ char chasesequence(void)
 					if(pool[pl]==activesquad->squad[p])
 						{
 						delete pool[pl];
-						pool.verase(pl);
+						pool.erase(pool.begin() + pl);
 						break;
 						}
 					}
@@ -31582,7 +31793,7 @@ char chasesequence(void)
 						if(vehicle[v2]==chaseseq.friendcar[v])
 							{
 							delete vehicle[v2];
-							vehicle.verase(v2);
+							vehicle.erase(vehicle.begin() + v2);
 							}
 						}
 					}
@@ -31710,7 +31921,7 @@ char footchase(void)
 	//NOTE: THIS FUNCTION RETURNS 1 IF ANYBODY ESCAPES
 		//IT CAN DELETE CREATURES, BUT SHOULD NOT DELETE SQUADS
 			//AS SQUADS MAY BE FICTITIOUS AND WILL BE DELETED LATER ANYWAY
-
+    int p;
 	reloadparty();
 
 	//NUKE ALL CARS
@@ -31735,7 +31946,7 @@ char footchase(void)
 		{
 		int partysize=0;
 		int partyalive=0;
-		for(int p=0;p<6;p++)
+		for(p=0;p<6;p++)
 			{
 			if(activesquad->squad[p]!=NULL)partysize++;
 			else continue;
@@ -31808,7 +32019,7 @@ char footchase(void)
 		if(partyalive==0&&c=='c')
 			{
 			//DESTROY ALL CARS BROUGHT ALONG WITH PARTY
-			for(int p=0;p<6;p++)
+			for(p=0;p<6;p++)
 				{
 				if(activesquad->squad[p]==NULL)continue;
 				if(activesquad->squad[p]->carid!=-1)
@@ -31817,7 +32028,7 @@ char footchase(void)
 					if(v!=-1)
 						{
 						delete vehicle[v];
-						vehicle.verase(v);
+						vehicle.erase(vehicle.begin() + v);
 						}
 					}
 				}
@@ -31831,7 +32042,7 @@ char footchase(void)
 					if(pool[pl]==activesquad->squad[p])
 						{
 						delete pool[pl];
-						pool.verase(pl);
+						pool.erase(pool.begin() + pl);
 						break;
 						}
 					}
@@ -32058,7 +32269,7 @@ void makechasers(long sitetype,long sitecrime)
 		{
 		case SITE_GOVERNMENT_INTELLIGENCEHQ:
 			cartype=VEHICLE_AGENTCAR;
-			pnum=random(sitecrime/5 + 1)+1;
+			pnum=LCSrandom(sitecrime/5 + 1)+1;
 			if(pnum>6)pnum=6;
 			for(n=0;n<pnum;n++)
 				{
@@ -32068,9 +32279,9 @@ void makechasers(long sitetype,long sitecrime)
 			break;
 		case SITE_CORPORATE_HEADQUARTERS:
 		case SITE_CORPORATE_HOUSE:
-			if(random(2))cartype=VEHICLE_SUV;
+			if(LCSrandom(2))cartype=VEHICLE_SUV;
 			else cartype=VEHICLE_JEEP;
-			pnum=random(sitecrime/5 + 1)+1;
+			pnum=LCSrandom(sitecrime/5 + 1)+1;
 			if(pnum>6)pnum=6;
 			for(n=0;n<pnum;n++)
 				{
@@ -32081,7 +32292,7 @@ void makechasers(long sitetype,long sitecrime)
 		case SITE_MEDIA_AMRADIO:
 		case SITE_MEDIA_CABLENEWS:
 			cartype=VEHICLE_PICKUP;
-			pnum=random(sitecrime/5 + 1)+1;
+			pnum=LCSrandom(sitecrime/5 + 1)+1;
 			if(pnum>18)pnum=18;
 			for(n=0;n<pnum;n++)
 				{
@@ -32092,7 +32303,7 @@ void makechasers(long sitetype,long sitecrime)
 		default:
 			chaseseq.canpullover=1;
 			cartype=VEHICLE_POLICECAR;
-			pnum=random(sitecrime/5 + 1)+1;
+			pnum=LCSrandom(sitecrime/5 + 1)+1;
 			if(pnum>6)pnum=6;
 			for(n=0;n<pnum;n++)
 				{
@@ -32110,9 +32321,9 @@ void makechasers(long sitetype,long sitecrime)
 	//ASSIGN CARS TO CREATURES
 	long carnum;
 	if(pnum<=2)carnum=1;
-	else if(pnum<=3)carnum=random(2)+1;
-	else if(pnum<=5)carnum=random(2)+2;
-	else if(pnum<=7)carnum=random(2)+3;
+	else if(pnum<=3)carnum=LCSrandom(2)+1;
+	else if(pnum<=5)carnum=LCSrandom(2)+2;
+	else if(pnum<=7)carnum=LCSrandom(2)+3;
 	else carnum=4;
 
 	for(int c=0;c<carnum;c++)
@@ -32141,7 +32352,7 @@ void makechasers(long sitetype,long sitecrime)
 			int v;
 			do
 				{
-				v=random(chaseseq.enemycar.size());
+				v=LCSrandom(chaseseq.enemycar.size());
 				encounter[n].carid=chaseseq.enemycar[v]->id;
 				encounter[n].is_driver=0;
 				}while(load[v]>=4);
@@ -32152,6 +32363,7 @@ void makechasers(long sitetype,long sitecrime)
 
 void evasivedrive(void)
 {
+	int e;
 	vector<long> yourrolls;
 	for(int p=0;p<6;p++)
 		{
@@ -32160,14 +32372,14 @@ void evasivedrive(void)
 			activesquad->squad[p]->is_driver)
 			{
 			long v=id_getcar(activesquad->squad[p]->carid);
-			yourrolls.push_back(driveskill(*activesquad->squad[p],vehicle[v])+random(10));
+			yourrolls.push_back(driveskill(*activesquad->squad[p],vehicle[v])+LCSrandom(10));
 			}
 		}
 
 	vector<long> theirrolls;
 	vector<long> theirrolls_id;
 	vector<long> theirrolls_drv;
-	for(int e=0;e<ENCMAX;e++)
+	for(e=0;e<ENCMAX;e++)
 		{
 		if(encounter[e].carid!=-1&&
 			encounter[e].align==-1&&
@@ -32179,7 +32391,7 @@ void evasivedrive(void)
 				{
 				if(chaseseq.enemycar[v]->id==encounter[e].carid)
 					{
-					theirrolls.push_back(driveskill(encounter[e],chaseseq.enemycar[v])+random(10));
+					theirrolls.push_back(driveskill(encounter[e],chaseseq.enemycar[v])+LCSrandom(10));
 					theirrolls_id.push_back(encounter[e].carid);
 					theirrolls_drv.push_back(encounter[e].id);
 					}
@@ -32197,13 +32409,13 @@ void evasivedrive(void)
 	int cnt;
 	for(int i=0;i<theirrolls.size();i++)
 		{
-		cnt=yourrolls[random(yourrolls.size())];
+		cnt=yourrolls[LCSrandom(yourrolls.size())];
 		if(theirrolls[i]<cnt)
 			{
 			clearmessagearea();
 			set_color(COLOR_CYAN,COLOR_BLACK,1);
 			move(16,1);
-			for(int e=0;e<ENCMAX;e++)
+			for(e=0;e<ENCMAX;e++)
 				{
 				if(encounter[e].id==theirrolls_drv[i])
 					{
@@ -32230,7 +32442,7 @@ void evasivedrive(void)
 				if(chaseseq.enemycar[v]->id==theirrolls_id[i])
 					{
 					delete chaseseq.enemycar[v];
-					chaseseq.enemycar.verase(v);
+					chaseseq.enemycar.erase(chaseseq.enemycar.begin() + v);
 					break;
 					}
 				}
@@ -32283,11 +32495,13 @@ void drivingupdate(short &obstacle)
 	//CHECK TO SEE WHICH CARS ARE BEING DRIVEN
 	vector<int> passenger;
 	int driver;
-	for(int v=chaseseq.friendcar.size()-1;v>=0;v--)
+	int v;
+	int p;
+	for(v=chaseseq.friendcar.size()-1;v>=0;v--)
 		{
 		passenger.clear();
 		driver=-1;
-		for(int p=0;p<6;p++)
+		for(p=0;p<6;p++)
 			{
 			if(activesquad->squad[p]==NULL)continue;
 			if(activesquad->squad[p]->carid==chaseseq.friendcar[v]->id)
@@ -32306,7 +32520,7 @@ void drivingupdate(short &obstacle)
 			//MAKE BEST DRIVING PASSENGER INTO A DRIVER
 			vector<int> goodp;
 			int max=0;
-			for(int p=0;p<passenger.size();p++)
+			for(p=0;p<passenger.size();p++)
 				{
 				if(driveskill(*activesquad->squad[passenger[p]],chaseseq.friendcar[v])>max&&
 					activesquad->squad[passenger[p]]->canwalk())
@@ -32325,7 +32539,7 @@ void drivingupdate(short &obstacle)
 
 			if(goodp.size()>0)
 				{
-				int p=goodp[random(goodp.size())];
+				int p=goodp[LCSrandom(goodp.size())];
 				activesquad->squad[p]->is_driver=1;
 				driver=p;
 
@@ -32350,7 +32564,7 @@ void drivingupdate(short &obstacle)
 		{
 		passenger.clear();
 		driver=-1;
-		for(int p=0;p<ENCMAX;p++)
+		for(p=0;p<ENCMAX;p++)
 			{
 			if(!encounter[p].exists)continue;
 			if(encounter[p].carid==chaseseq.enemycar[v]->id)
@@ -32369,7 +32583,7 @@ void drivingupdate(short &obstacle)
 			//MAKE BEST DRIVING PASSENGER INTO A DRIVER
 			vector<int> goodp;
 			int max=0;
-			for(int p=0;p<passenger.size();p++)
+			for(p=0;p<passenger.size();p++)
 				{
 				if(driveskill(encounter[passenger[p]],chaseseq.enemycar[v])>max&&
 					encounter[passenger[p]].canwalk())
@@ -32388,7 +32602,7 @@ void drivingupdate(short &obstacle)
 
 			if(goodp.size()>0)
 				{
-				int p=goodp[random(goodp.size())];
+				int p=goodp[LCSrandom(goodp.size())];
 				encounter[p].is_driver=1;
 				driver=p;
 
@@ -32410,9 +32624,9 @@ void drivingupdate(short &obstacle)
 		}
 
 	//SET UP NEXT OBSTACLE
-	if(!random(3))
+	if(!LCSrandom(3))
 		{
-		obstacle=random(CARCHASE_OBSTACLENUM);
+		obstacle=LCSrandom(CARCHASE_OBSTACLENUM);
 		}
 	else obstacle=-1;
 }
@@ -32435,7 +32649,7 @@ void obstacledrive(short obstacle,char choice)
 				refresh();
 				getch();
 
-				if(!random(5))
+				if(!LCSrandom(5))
 					{
 					set_color(COLOR_RED,COLOR_BLACK,1);
 					move(17,1);
@@ -32452,6 +32666,7 @@ void obstacledrive(short obstacle,char choice)
 
 void dodgedrive(void)
 {
+	int v;
 	clearmessagearea();
 	set_color(COLOR_YELLOW,COLOR_BLACK,1);
 	move(16,1);
@@ -32460,7 +32675,7 @@ void dodgedrive(void)
 	getch();
 
 	int driver;
-	for(int v=chaseseq.friendcar.size()-1;v>=0;v--)
+	for(v=chaseseq.friendcar.size()-1;v>=0;v--)
 		{
 		driver=-1;
 		for(int p=0;p<6;p++)
@@ -32478,7 +32693,7 @@ void dodgedrive(void)
 
 		if(driver!=-1)
 			{
-			if(random(11)>driveskill(*activesquad->squad[driver],chaseseq.friendcar[v]))
+			if(LCSrandom(11)>driveskill(*activesquad->squad[driver],chaseseq.friendcar[v]))
 				{
 				crashfriendlycar(v);
 				sitestory->crime.push_back(CRIME_CARCHASE);
@@ -32504,7 +32719,7 @@ void dodgedrive(void)
 
 		if(driver!=-1)
 			{
-			if(random(11)>driveskill(encounter[driver],chaseseq.enemycar[v]))
+			if(LCSrandom(11)>driveskill(encounter[driver],chaseseq.enemycar[v]))
 				{
 				crashenemycar(v);
 				sitestory->crime.push_back(CRIME_CARCHASE);
@@ -32542,7 +32757,7 @@ void crashfriendlycar(int v)
 						if(pool[pl]==activesquad->squad[p]->prisoner)
 							{
 							delete pool[pl];
-							pool.verase(pl);
+							pool.erase(pool.begin() + pl);
 							break;
 							}
 						}
@@ -32555,7 +32770,7 @@ void crashfriendlycar(int v)
 				if(pool[pl]==activesquad->squad[p])
 					{
 					delete pool[pl];
-					pool.verase(pl);
+					pool.erase(pool.begin() + pl);
 					break;
 					}
 				}
@@ -32581,12 +32796,12 @@ void crashfriendlycar(int v)
 		if(vehicle[v2]==chaseseq.friendcar[v])
 			{
 			delete vehicle[v2];
-			vehicle.verase(v2);
+			vehicle.erase(vehicle.begin() + v2);
 			break;
 			}
 		}
 
-	chaseseq.friendcar.verase(v);
+	chaseseq.friendcar.erase(chaseseq.friendcar.begin() + v);
 
 	//CRASH CAR
 	clearmessagearea();
@@ -32594,7 +32809,7 @@ void crashfriendlycar(int v)
 	move(16,1);
 	addstr("Your ");
 	addstr(str);
-	switch(random(3))
+	switch(LCSrandom(3))
 		{
 		case 0:addstr(" slams into a building.");break;
 		case 1:
@@ -32628,7 +32843,7 @@ void crashenemycar(int v)
 		}
 
 	delete chaseseq.enemycar[v];
-	chaseseq.enemycar.verase(v);
+	chaseseq.enemycar.erase(chaseseq.enemycar.begin() + v);
 
 	//CRASH CAR
 	clearmessagearea();
@@ -32636,7 +32851,7 @@ void crashenemycar(int v)
 	move(16,1);
 	addstr("The ");
 	addstr(str);
-	switch(random(3))
+	switch(LCSrandom(3))
 		{
 		case 0:addstr(" slams into a building.");break;
 		case 1:
@@ -32654,6 +32869,7 @@ void crashenemycar(int v)
 
 void chase_giveup(void)
 {
+	int p;
 	long ps=-1;
 	for(long l=0;l<location.size();l++)
 		{
@@ -32670,12 +32886,12 @@ void chase_giveup(void)
 			if(vehicle[v2]==chaseseq.friendcar[v])
 				{
 				delete vehicle[v2];
-				vehicle.verase(v2);
+				vehicle.erase(vehicle.begin() + v2);
 				}
 			}
 		}
 	chaseseq.friendcar.clear();
-	for(int p=0;p<6;p++)
+	for(p=0;p<6;p++)
 		{
 		if(activesquad->squad[p]==NULL)continue;
 		activesquad->squad[p]->squadid=-1;
@@ -32712,7 +32928,7 @@ void evasiverun(void)
 		if(activesquad->squad[p]->alive)
 			{
 			yourrolls.push_back(activesquad->squad[p]->attval(ATTRIBUTE_AGILITY)+
-				activesquad->squad[p]->attval(ATTRIBUTE_HEALTH)+random(10));
+				activesquad->squad[p]->attval(ATTRIBUTE_HEALTH)+LCSrandom(10));
 			}
 		}
 
@@ -32727,9 +32943,9 @@ void evasiverun(void)
 	for(int e=0;e<ENCMAX;e++)
 		{
 		if(!encounter[e].exists)continue;
-		cnt=yourrolls[random(yourrolls.size())];
+		cnt=yourrolls[LCSrandom(yourrolls.size())];
 		if(encounter[e].attval(ATTRIBUTE_AGILITY)+
-			encounter[e].attval(ATTRIBUTE_HEALTH)+random(10)<cnt)
+			encounter[e].attval(ATTRIBUTE_HEALTH)+LCSrandom(10)<cnt)
 			{
 			clearmessagearea();
 			set_color(COLOR_CYAN,COLOR_BLACK,1);
@@ -32812,7 +33028,7 @@ void resolvesite(void)
 	if(sitealienate)sitestory->positive=0;
 	if(sitealarm==1&&location[cursite]->renting==-1)
 		{
-		location[cursite]->closed=random(3)+2;
+		location[cursite]->closed=LCSrandom(3)+2;
 		}
 }
 
@@ -32826,7 +33042,7 @@ void advancelocations(void)
 			location[l]->closed--;
 			if(location[l]->closed==0)
 				{
-				switch(random(2))
+				switch(LCSrandom(2))
 					{
 					case 0:
 						if(securityable(location[l]->type))location[l]->highsecurity=1;
@@ -32869,7 +33085,7 @@ void initlocation(locationst &loc)
 			if(law[LAW_DEATHPENALTY]==-2&&
 				law[LAW_POLICEBEHAVIOR]==-2)
 				{
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcpy(loc.name,"Happy");break;
 					case 1:strcpy(loc.name,"Cheery");break;
@@ -32878,7 +33094,7 @@ void initlocation(locationst &loc)
 					case 4:strcpy(loc.name,"Nectar");break;
 					}
 				strcat(loc.name," ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(loc.name,"Valley");break;
 					case 1:strcat(loc.name,"Meadow");break;
@@ -32943,7 +33159,7 @@ void initlocation(locationst &loc)
 			strcat(loc.name,str);
 			strcat(loc.name," ");
 
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:
 					strcat(loc.name,"Meat Plant");
@@ -32969,7 +33185,7 @@ void initlocation(locationst &loc)
 			break;
 			}
 		case SITE_INDUSTRY_POLLUTER:
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:
 					strcpy(loc.name,"Aluminum Factory");
@@ -33073,7 +33289,7 @@ void initlocation(locationst &loc)
 			break;
 		case SITE_BUSINESS_JUICEBAR:
 			strcpy(loc.name,"");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Natural");break;
 				case 1:strcat(loc.name,"Harmonious");break;
@@ -33082,7 +33298,7 @@ void initlocation(locationst &loc)
 				case 4:strcat(loc.name,"New You");break;
 				}
 			strcat(loc.name," ");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Diet");break;
 				case 1:strcat(loc.name,"Methods");break;
@@ -33095,7 +33311,7 @@ void initlocation(locationst &loc)
 			break;
 		case SITE_BUSINESS_VEGANCOOP:
 			strcpy(loc.name,"");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Asparagus");break;
 				case 1:strcat(loc.name,"Tofu");break;
@@ -33104,7 +33320,7 @@ void initlocation(locationst &loc)
 				case 4:strcat(loc.name,"Eggplant");break;
 				}
 			strcat(loc.name," ");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Forest");break;
 				case 1:strcat(loc.name,"Rainbow");break;
@@ -33117,7 +33333,7 @@ void initlocation(locationst &loc)
 			break;
 		case SITE_BUSINESS_INTERNETCAFE:
 			strcpy(loc.name,"");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Electric");break;
 				case 1:strcat(loc.name,"Wired");break;
@@ -33126,7 +33342,7 @@ void initlocation(locationst &loc)
 				case 4:strcat(loc.name,"Techno");break;
 				}
 			strcat(loc.name," ");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Panda");break;
 				case 1:strcat(loc.name,"Troll");break;
@@ -33146,7 +33362,7 @@ void initlocation(locationst &loc)
 			break;
 		case SITE_BUSINESS_LATTESTAND:
 			strcpy(loc.name,"");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Frothy");break;
 				case 1:strcat(loc.name,"Milky");break;
@@ -33155,7 +33371,7 @@ void initlocation(locationst &loc)
 				case 4:strcat(loc.name,"Evening");break;
 				}
 			strcat(loc.name," ");
-			switch(random(5))
+			switch(LCSrandom(5))
 				{
 				case 0:strcat(loc.name,"Mug");break;
 				case 1:strcat(loc.name,"Cup");break;
@@ -33432,13 +33648,13 @@ void investlocation(void)
 				funds-=3000;
 				stat_spent+=3000;
 				moneylost_compound+=3000;
-				location[loc]->front_business=random(BUSINESSFRONTNUM);
+				location[loc]->front_business=LCSrandom(BUSINESSFRONTNUM);
 				lastname(location[loc]->front_name);
 				strcat(location[loc]->front_name," ");
 				switch(location[loc]->front_business)
 					{
 					case BUSINESSFRONT_INSURANCE:
-						switch(random(3))
+						switch(LCSrandom(3))
 							{
 							case 0:strcat(location[loc]->front_name,"Auto");break;
 							case 1:strcat(location[loc]->front_name,"Life");break;
@@ -33447,7 +33663,7 @@ void investlocation(void)
 						strcat(location[loc]->front_name," Insurance");
 						break;
 					case BUSINESSFRONT_TEMPAGENCY:
-						switch(random(2))
+						switch(LCSrandom(2))
 							{
 							case 0:strcat(location[loc]->front_name,"Temp Agency");break;
 							case 1:strcat(location[loc]->front_name,"Manpower, LLC");break;
@@ -33883,7 +34099,7 @@ void verifyworklocation(creaturest &cr)
 		{
 		do
 			{
-			cr.worklocation=random(SITENUM);
+			cr.worklocation=LCSrandom(SITENUM);
 			}while(!okaysite[cr.worklocation]);
 
 		//FIND ONE OF THESE
@@ -33897,7 +34113,7 @@ void verifyworklocation(creaturest &cr)
 				}
 			}
 
-		cr.worklocation=goodlist[random(goodlist.size())];
+		cr.worklocation=goodlist[LCSrandom(goodlist.size())];
 		}
 }
 
@@ -33932,7 +34148,7 @@ void sleepereffect(creaturest &cr,char &clearformess)
 	switch(cr.type)
 		{
 		case CREATURE_CORPORATE_CEO:
-			switch(random(3))
+			switch(LCSrandom(3))
 				{
 				case 0:view=VIEW_CEOSALARY;break;
 				case 1:view=VIEW_CORPORATECULTURE;break;
@@ -33944,10 +34160,10 @@ void sleepereffect(creaturest &cr,char &clearformess)
 		case CREATURE_CRITIC_ART:
 		case CREATURE_CRITIC_MUSIC:
 		case CREATURE_ACTOR:
-			view=random(VIEWNUM-2);
+			view=LCSrandom(VIEWNUM-2);
 			break;
 		case CREATURE_SCIENTIST_EMINENT:
-			switch(random(3))
+			switch(LCSrandom(3))
 				{
 				case 0:view=VIEW_NUCLEARPOWER;break;
 				case 1:view=VIEW_ANIMALRESEARCH;break;
@@ -33956,7 +34172,7 @@ void sleepereffect(creaturest &cr,char &clearformess)
 			break;
 		case CREATURE_LAWYER:
 		case CREATURE_JUDGE_CONSERVATIVE:
-			switch(random(8))
+			switch(LCSrandom(8))
 				{
 				case 0:view=VIEW_DEATHPENALTY;break;
 				case 1:view=VIEW_FREESPEECH;break;
@@ -33969,7 +34185,7 @@ void sleepereffect(creaturest &cr,char &clearformess)
 				}
 			break;
 		case CREATURE_CORPORATE_MANAGER:
-			switch(random(3))
+			switch(LCSrandom(3))
 				{
 				case 0:view=VIEW_CEOSALARY;break;
 				case 1:view=VIEW_CORPORATECULTURE;break;
@@ -33981,14 +34197,14 @@ void sleepereffect(creaturest &cr,char &clearformess)
 			view=VIEW_POLICEBEHAVIOR;
 			break;
 		case CREATURE_DEATHSQUAD:
-			switch(random(2))
+			switch(LCSrandom(2))
 				{
 				case 0:view=VIEW_DEATHPENALTY;break;
 				case 1:view=VIEW_POLICEBEHAVIOR;break;
 				}
 			break;
 		case CREATURE_EDUCATOR:
-			switch(random(2))
+			switch(LCSrandom(2))
 				{
 				case 0:view=VIEW_DEATHPENALTY;break;
 				case 1:view=VIEW_PRISONS;break;
@@ -34005,8 +34221,8 @@ void sleepereffect(creaturest &cr,char &clearformess)
 			break;
 		}
 
-	if(random(3))power>>=1;
-	if(random(3))power>>=1;
+	if(LCSrandom(3))power>>=1;
+	if(LCSrandom(3))power>>=1;
 	if(power==0)return;
 	if(view==-1)return;
 
@@ -34015,15 +34231,17 @@ void sleepereffect(creaturest &cr,char &clearformess)
 
 void majornewspaper(char &clearformess,char canseethings)
 {
+ int n = 0 ;
+ 
 	//SET UP MAJOR EVENTS
-	if(!random(VIEWNUM*5))
+	if(!LCSrandom(VIEWNUM*5))
 		{
 		newsstoryst *ns=new newsstoryst;
 			ns->type=NEWSSTORY_MAJOREVENT;
 			do
 				{
-				ns->view=random(VIEWNUM-2);
-				ns->positive=random(2);
+				ns->view=LCSrandom(VIEWNUM-2);
+				ns->positive=LCSrandom(2);
 
 				//NO ABORTION
 				if(ns->view==VIEW_ABORTION&&ns->positive&&law[LAW_ABORTION]==-2)continue;
@@ -34059,13 +34277,13 @@ void majornewspaper(char &clearformess,char canseethings)
 		}
 
 	//DELETE STORIES THAT HAVE NO CONTENT
-	for(int n=newsstory.size()-1;n>=0;n--)
+	for(n=newsstory.size()-1;n>=0;n--)
 		{
 		if(newsstory[n]->type==NEWSSTORY_SQUAD_SITE&&
 			newsstory[n]->crime.size()==0)
 			{
 			delete newsstory[n];
-			newsstory.verase(n);
+			newsstory.erase(newsstory.begin() + n);
 			continue;
 			}
 
@@ -34083,21 +34301,21 @@ void majornewspaper(char &clearformess,char canseethings)
 			if(!conf)
 				{
 				delete newsstory[n];
-				newsstory.verase(n);
+				newsstory.erase(newsstory.begin() + n);
 				continue;
 				}
 			}
 
-		if((newsstory[n]->siegetype==NEWSSTORY_SQUAD_ESCAPED||
-			newsstory[n]->siegetype==NEWSSTORY_SQUAD_FLEDATTACK||
-			newsstory[n]->siegetype==NEWSSTORY_SQUAD_DEFENDED||
-			newsstory[n]->siegetype==NEWSSTORY_SQUAD_BROKESIEGE||
-			newsstory[n]->siegetype==NEWSSTORY_SQUAD_KILLED_SIEGEATTACK||
-			newsstory[n]->siegetype==NEWSSTORY_SQUAD_KILLED_SIEGEESCAPE)&&
+		if((newsstory[n]->type==NEWSSTORY_SQUAD_ESCAPED||
+			newsstory[n]->type==NEWSSTORY_SQUAD_FLEDATTACK||
+			newsstory[n]->type==NEWSSTORY_SQUAD_DEFENDED||
+			newsstory[n]->type==NEWSSTORY_SQUAD_BROKESIEGE||
+			newsstory[n]->type==NEWSSTORY_SQUAD_KILLED_SIEGEATTACK||
+			newsstory[n]->type==NEWSSTORY_SQUAD_KILLED_SIEGEESCAPE)&&
 			newsstory[n]->siegetype!=SIEGE_POLICE)
 			{
 			delete newsstory[n];
-			newsstory.verase(n);
+			newsstory.erase(newsstory.begin() + n);
 			continue;
 			}
 		}
@@ -34111,7 +34329,7 @@ void majornewspaper(char &clearformess,char canseethings)
 	if(canseethings)
 		{
 		char del;
-		for(n=newsstory.size()-1;n>=0;n--)
+		for(int n=newsstory.size()-1;n>=0;n--)
 			{
 			del=0;
 			if(newsstory[n]->type==NEWSSTORY_MAJOREVENT)
@@ -34146,7 +34364,7 @@ void majornewspaper(char &clearformess,char canseethings)
 							{
 							char str[80];
 							strcpy(str,"Tonight on a Cable News channel: ");
-							switch(random(5))
+							switch(LCSrandom(5))
 								{
 								case 0:strcat(str,"Cross");break;
 								case 1:strcat(str,"Hard");break;
@@ -34154,7 +34372,7 @@ void majornewspaper(char &clearformess,char canseethings)
 								case 3:strcat(str,"Washington");break;
 								case 4:strcat(str,"Capital");break;
 								}
-							switch(random(5))
+							switch(LCSrandom(5))
 								{
 								case 0:strcat(str," Fire");break;
 								case 1:strcat(str," Ball");break;
@@ -34181,7 +34399,7 @@ void majornewspaper(char &clearformess,char canseethings)
 							name(bname);
 							addstr(bname);
 							move(17,41);
-							switch(random(3))
+							switch(LCSrandom(3))
 								{
 								case 0:addstr("Eugene, OR");break;
 								case 1:addstr("San Francisco, CA");break;
@@ -34291,7 +34509,7 @@ void majornewspaper(char &clearformess,char canseethings)
 			if(del)
 				{
 				delete newsstory[n];
-				newsstory.verase(n);
+				newsstory.erase(newsstory.begin() + n);
 				}
 			}
 		}
@@ -34324,11 +34542,11 @@ void majornewspaper(char &clearformess,char canseethings)
 		if(maxn!=-1)
 			{
 			if(newsstory[maxn]->priority<30&&curpage==1)curpage=2;
-			if(newsstory[maxn]->priority<25&&curpage<3)curpage=3+random(2);
-			if(newsstory[maxn]->priority<20&&curpage<5)curpage=5+random(5);
-			if(newsstory[maxn]->priority<15&&curpage<10)curpage=10+random(10);
-			if(newsstory[maxn]->priority<10&&curpage<20)curpage=20+random(10);
-			if(newsstory[maxn]->priority<5&&curpage<30)curpage=30+random(20);
+			if(newsstory[maxn]->priority<25&&curpage<3)curpage=3+LCSrandom(2);
+			if(newsstory[maxn]->priority<20&&curpage<5)curpage=5+LCSrandom(5);
+			if(newsstory[maxn]->priority<15&&curpage<10)curpage=10+LCSrandom(10);
+			if(newsstory[maxn]->priority<10&&curpage<20)curpage=20+LCSrandom(10);
+			if(newsstory[maxn]->priority<5&&curpage<30)curpage=30+LCSrandom(20);
 
 			newsstory[maxn]->page=curpage;
 			curpage++;
@@ -34566,6 +34784,7 @@ void setpriority(newsstoryst &ns)
 
 void displaystory(newsstoryst &ns)
 {
+	int it2;
 	for(int x=0;x<80;x++)
 		{
 		for(int y=0;y<25;y++)
@@ -34579,7 +34798,7 @@ void displaystory(newsstoryst &ns)
 	if(ns.page==1)
 		{
 		//TOP
-		int pap=random(5);
+		int pap=LCSrandom(5);
 		for(int x=0;x<80;x++)
 			{
 			for(int y=0;y<5;y++)
@@ -34632,14 +34851,14 @@ void displaystory(newsstoryst &ns)
 	char story[5000];
 	short storyx_s[25];
 	short storyx_e[25];
-	for(int it2=0;it2<25;it2++)storyx_s[it2]=1;
+	for(it2=0;it2<25;it2++)storyx_s[it2]=1;
 	for(it2=0;it2<25;it2++)storyx_e[it2]=78;
 	int adnumber=0;
 	if(ns.page>=10)adnumber++;
-	if(ns.page>=20)adnumber+=random(2)+1;
-	if(ns.page>=30)adnumber+=random(2)+1;
-	if(ns.page>=40)adnumber+=random(2)+1;
-	if(ns.page>=50)adnumber+=random(2)+1;
+	if(ns.page>=20)adnumber+=LCSrandom(2)+1;
+	if(ns.page>=30)adnumber+=LCSrandom(2)+1;
+	if(ns.page>=40)adnumber+=LCSrandom(2)+1;
+	if(ns.page>=50)adnumber+=LCSrandom(2)+1;
 	char addplace[2][3]={0,0,0,0,0,0};
 	if(adnumber>6)adnumber=6;
 	while(adnumber>0)
@@ -34647,7 +34866,7 @@ void displaystory(newsstoryst &ns)
 		int x,y;
 		do
 			{
-			x=random(2);y=random(3);
+			x=LCSrandom(2);y=LCSrandom(3);
 			}while(addplace[x][y]);
 		addplace[x][y]=1;
 		adnumber--;
@@ -34656,11 +34875,11 @@ void displaystory(newsstoryst &ns)
 		if(x==0)
 			{
 			sx=0;
-			ex=23+random(4);
+			ex=23+LCSrandom(4);
 			}
 		if(x==1)
 			{
-			sx=57-random(4);
+			sx=57-LCSrandom(4);
 			ex=79;
 			}
 		if(y==0)
@@ -34680,7 +34899,7 @@ void displaystory(newsstoryst &ns)
 			}
 
 		unsigned char ch;
-		switch(random(6))
+		switch(LCSrandom(6))
 			{
 			case 0:ch=176;break;
 			case 1:ch=177;break;
@@ -34710,13 +34929,13 @@ void displaystory(newsstoryst &ns)
 		//AD CONTENT
 		short storyx_s[25];
 		short storyx_e[25];
-		for(int it2=0;it2<25;it2++)storyx_s[it2]=40;
+		for(it2=0;it2<25;it2++)storyx_s[it2]=40;
 		for(it2=0;it2<25;it2++)storyx_e[it2]=40;
 		for(it2=sy+1;it2<=ey-1;it2++)storyx_s[it2]=sx+1;
 		for(it2=sy+1;it2<=ey-1;it2++)storyx_e[it2]=ex-1;
 
 		char ad[500];
-		switch(random(5))
+		switch(LCSrandom(5))
 			{
 			case 0:
 				strcpy(ad,"&cNo Fee&r");
@@ -34778,7 +34997,7 @@ void displaystory(newsstoryst &ns)
 						displaycenterednewsfont("REAGAN FLAWED",5);
 						char str[80];
 						strcpy(str,"");
-						switch(random(5))
+						switch(LCSrandom(5))
 							{
 							case 0:strcat(str,"Shadow");break;
 							case 1:strcat(str,"Dark");break;
@@ -34787,7 +35006,7 @@ void displaystory(newsstoryst &ns)
 							case 4:strcat(str,"Craggy");break;
 							}
 						strcat(str," ");
-						switch(random(5))
+						switch(LCSrandom(5))
 							{
 							case 0:strcat(str,"Actor");break;
 							case 1:strcat(str,"Lord");break;
@@ -34855,7 +35074,7 @@ void displaystory(newsstoryst &ns)
 						displaycenterednewsfont("AMERICAN CEO",5);
 						char str[80];
 			strcpy(str,"This major CEO ");
-			switch(random(10))
+			switch(LCSrandom(10))
 				{
 				case 0:
 					strcat(str,"regularly visits prostitutes.");
@@ -34918,7 +35137,7 @@ void displaystory(newsstoryst &ns)
 						displaycenterednewsfont("REAGAN THE MAN",5);
 						char str[80];
 						strcpy(str,"");
-						switch(random(5))
+						switch(LCSrandom(5))
 							{
 							case 0:strcat(str,"Great");break;
 							case 1:strcat(str,"Noble");break;
@@ -34927,7 +35146,7 @@ void displaystory(newsstoryst &ns)
 							case 4:strcat(str,"Golden");break;
 							}
 						strcat(str," ");
-						switch(random(5))
+						switch(LCSrandom(5))
 							{
 							case 0:strcat(str,"Leadership");break;
 							case 1:strcat(str,"Courage");break;
@@ -35525,9 +35744,11 @@ void loadgraphics(void)
 	unsigned long picnum,dimx,dimy;
 
 	DWORD numbytes;
-	HANDLE h=CreateFile("art\\largecap.cpc",GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+	HANDLE h;
 
-	if(h!=INVALID_HANDLE_VALUE)
+	h=LCSCreateFile("art\\largecap.cpc", LCSIO_READ);
+	
+	if(h!=NULL)
 		{
 		ReadFile(h,&picnum,sizeof(unsigned long),&numbytes,NULL);
 		ReadFile(h,&dimx,sizeof(unsigned long),&numbytes,NULL);
@@ -35545,9 +35766,8 @@ void loadgraphics(void)
 		CloseHandle(h);
 		}
 
-	h=CreateFile("art\\newstops.cpc",GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
-
-	if(h!=INVALID_HANDLE_VALUE)
+	h=LCSCreateFile("art\\newstops.cpc", LCSIO_READ);
+	if(h!=NULL)
 		{
 		ReadFile(h,&picnum,sizeof(unsigned long),&numbytes,NULL);
 		ReadFile(h,&dimx,sizeof(unsigned long),&numbytes,NULL);
@@ -35565,9 +35785,9 @@ void loadgraphics(void)
 		CloseHandle(h);
 		}
 
-	h=CreateFile("art\\newspic.cpc",GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
-
-	if(h!=INVALID_HANDLE_VALUE)
+	h=LCSCreateFile("art\\newspic.cpc", LCSIO_READ);
+	
+	if(h!=NULL)
 		{
 		ReadFile(h,&picnum,sizeof(unsigned long),&numbytes,NULL);
 		ReadFile(h,&dimx,sizeof(unsigned long),&numbytes,NULL);
@@ -35589,7 +35809,8 @@ void loadgraphics(void)
 void displaycenterednewsfont(char *str,int y)
 {
 	int width=-1;
-	for(int s=0;s<strlen(str);s++)
+	int s;
+	for(s=0;s<strlen(str);s++)
 		{
 		if(str[s]>='A'&&str[s]<='Z')width+=6;
 		else if(str[s]=='\'')width+=4;
@@ -35693,7 +35914,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,dstr);
 				strcat(story," ");
 				strcat(story,dstr2);
-				char gn=random(2);
+				char gn=LCSrandom(2);
 				switch(gn)
 					{
 					case 0:strcpy(gen,"his");break;
@@ -35705,7 +35926,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,dstr2);
 				strcat(story," was hit ");
 				char num[20];
-				itoa(random(15)+3,num,10);
+				itoa(LCSrandom(15)+3,num,10);
 				strcat(story,num);
 				strcat(story," times and died immediately in the parking lot.  ");
 				strcat(story,"The suspected shooter, ");
@@ -35726,7 +35947,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," is survived by ");
 				strcat(story,gen);
 				strcat(story," ");
-				char spouse=random(2);
+				char spouse=LCSrandom(2);
 				if(law[LAW_GAY]<=1)
 					{
 					spouse=1-gn;
@@ -35737,7 +35958,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 1:strcat(story,"wife");break;
 					}
 				strcat(story," and ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"two");break;
 					case 1:strcat(story,"three");break;
@@ -35757,7 +35978,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,dstr2);
 				if(law[LAW_GAY]<=-1)strcat(story,", a known homosexual, was ");
 				else strcat(story,", a homosexual, was ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"dragged to death behind a pickup truck");break;
 					case 1:strcat(story,"burned alive");break;
@@ -35770,7 +35991,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"&r");
 				strcat(story,"   Witnesses of the freeway chase described the pickup of the alleged ");
 				strcat(story,"murderers swerving wildly, ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"throwing beer bottles");break;
 					case 1:strcat(story,"urinating out the window");break;
@@ -35778,7 +35999,7 @@ void constructeventstory(char *story,short view,char positive)
 					}
 				strcat(story," at the pursuing police cruisers.  ");
 				strcat(story,"The chase ended when ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"the suspects ran out of gas, ");break;
 					case 1:strcat(story,"the suspects collided with a manure truck, ");break;
@@ -35815,12 +36036,12 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,dstr3);
 				strcat(story," was convicted in ");
 				char num[20];
-				itoa(year-random(11)-10,num,10);
+				itoa(year-LCSrandom(11)-10,num,10);
 				strcat(story,num);
 				strcat(story," of thirteen serial murders.  ");
 				strcat(story,"Since then, numerous pieces of exculpatory evidence ");
 				strcat(story,"have been produced, including ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"a confession from another convict.  ");break;
 					case 1:strcat(story,"a battery of negative DNA tests.  ");break;
@@ -35833,7 +36054,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"The state still went through with the execution, with a ");
 				strcat(story,"spokesperson for the governor saying, ");
 				strcat(story,"\"");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"Let's not forget the convict is colored.  You know how their kind are");break;
 					case 1:
@@ -35866,7 +36087,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," ");
 				strcat(story,dstr2);
 				strcat(story,"'s new tour-de-force, _");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Nightmare");break;
 					case 1:strcat(story,"Primal");break;
@@ -35875,7 +36096,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Solitary");break;
 					}
 				strcat(story,"_");
-				switch(random(7))
+				switch(LCSrandom(7))
 					{
 					case 0:strcat(story,"Packer");break;
 					case 1:strcat(story,"Soap");break;
@@ -35906,7 +36127,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"This newspaper yesterday received a collection of files from a source in the Federal Bureau of Investigations.  ");
 				strcat(story,"The files contain information on which people have been attending demonstrations, organizing ");
 				strcat(story,"unions, working for liberal organizations -- even ");
-				switch(random(2))
+				switch(LCSrandom(2))
 					{
 					case 0:strcat(story,"buying music with 'Explicit Lyrics' labels.");break;
 					case 1:strcat(story,"helping homeless people");break;
@@ -35941,7 +36162,7 @@ void constructeventstory(char *story,short view,char positive)
 				lastname(dstr);
 				strcat(story,dstr);
 				strcat(story,"_and_the_");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Mysterious");break;
 					case 1:strcat(story,"Magical");break;
@@ -35950,7 +36171,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Wondrous");break;
 					}
 				strcat(story,"_");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Thing");break;
 					case 1:strcat(story,"Stuff");break;
@@ -35959,7 +36180,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Something");break;
 					}
 				strcat(story,"_, is the third in an immensely popular series by ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"British");break;
 					case 1:strcat(story,"Indian");break;
@@ -35969,11 +36190,11 @@ void constructeventstory(char *story,short view,char positive)
 					}
 				strcat(story," author ");
 				char c[2];
-				c[0]='A'+random(26);
+				c[0]='A'+LCSrandom(26);
 				c[1]='\x0';
 				strcat(story,c);
 				strcat(story,".");
-				c[0]='A'+random(26);
+				c[0]='A'+LCSrandom(26);
 				c[1]='\x0';
 				strcat(story,c);
 				strcat(story,". ");
@@ -35982,7 +36203,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,".  ");
 				strcat(story,"Although the series is adored by children worldwide, ");
 				strcat(story,"some conservatives feel that the books ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"glorify Satan worship and are spawned by demons from the pit.  ");break;
 					case 1:strcat(story,"teach children to kill their parents and hate life.  ");break;
@@ -35991,7 +36212,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"contain step-by-step instructions to summon the Prince of Darkness.  ");break;
 					}
 				strcat(story,"In their complaint, the groups cited an incident involving ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"a child that swore in class");break;
 					case 1:strcat(story,"a child that said a magic spell at her parents");break;
@@ -36002,7 +36223,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"   When the decision to ban the book was announced yesterday, ");
 				strcat(story,"many area children spontoneously broke into tears.  One child was ");
 				strcat(story,"heard saying, \"");
-				switch(random(2))
+				switch(LCSrandom(2))
 					{
 					case 0:
 						strcat(story,"Mamma, is ");
@@ -36033,7 +36254,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"   ");
 				strcat(story,dstr2);
 				strcat(story,", who once ");
-				switch(random(2))
+				switch(LCSrandom(2))
 					{
 					case 0:strcat(story,"defied the federal government by putting a Ten Commandments monument in the local federal building");break;
 					case 1:strcat(story,"stated that, \"Segregation wasn't the bad idea everybody makes it out to be these days\"");break;
@@ -36047,7 +36268,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," last week in a hotel during a police sting operation.  ");
 				strcat(story,"According to sources familiar with the particulars, ");
 				strcat(story,"when police broke into the hotel room they saw ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"\"the most perverse and spine-tingling debauchery imaginable, at least with only two people.\"");break;
 					case 1:strcat(story,"the judge relieving himself on the prostitute.");break;
@@ -36056,7 +36277,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"  ");
 				strcat(story,pstr2);
 				strcat(story," reportedly offered ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"the arresting officers money");break;
 					case 1:strcat(story,"to let the officers join in");break;
@@ -36083,14 +36304,14 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,dstr2);
 				strcat(story," went off for fifteen minutes in an inexplicable rant ");
 				strcat(story,"two nights ago during the syndicated radio program \"");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"Straight");break;
 					case 1:strcat(story,"Real");break;
 					case 2:strcat(story,"True");break;
 					}
 				strcat(story," ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"Talk");break;
 					case 1:strcat(story,"Chat");break;
@@ -36103,7 +36324,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"'s monologue for the evening began the way that fans ");
 				strcat(story,"had come to expect, with attacks on the \"liberal media establishment\" and ");
 				strcat(story,"the \"elite liberal agenda\".  But when the radio icon said, \"");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"and the Grays are going to take over the planet in the End Times");break;
 					case 1:strcat(story,"a liberal chupacabra will suck the blood from us like a goat, a goat!, a goat!");break;
@@ -36116,18 +36337,18 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," ");
 				strcat(story,nstr2);
 				strcat(story,", knew that \"");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"my old hero");break;
 					case 1:strcat(story,"my old idol");break;
 					case 2:strcat(story,"the legend");break;
 					}
 				strcat(story," had ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:
 						strcat(story,"lost ");
-						switch(random(2))
+						switch(LCSrandom(2))
 							{
 							case 0:strcat(story,"his");break;
 							case 1:strcat(story,"her");break;
@@ -36172,7 +36393,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," ");
 				strcat(story,dstr3);
 				strcat(story," was detained yesterday afternoon, reportedly in possession of ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"pieces of another victim");break;
 					case 1:strcat(story,"bloody toys");break;
@@ -36182,7 +36403,7 @@ void constructeventstory(char *story,short view,char positive)
 					}
 				strcat(story,".  Over twenty children in the past two years have gone missing, ");
 				strcat(story,"only to turn up later dead and ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"carved with satanic symbols");break;
 					case 1:strcat(story,"sexually mutilated");break;
@@ -36191,7 +36412,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"without eyes");break;
 					}
 				strcat(story,".  Sources say that the police got a break in the case when ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"a victim called 911 just prior to being slain while still on the phone");break;
 					case 1:strcat(story,"the suspect allegedly carved an address into one of the bodies");break;
@@ -36211,7 +36432,7 @@ void constructeventstory(char *story,short view,char positive)
 				cityname(story);
 				strcat(story," - Researchers here report that they have discovered an amazing new wonder drug.  ");
 				strcat(story,"Called ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Anal");break;
 					case 1:strcat(story,"Colo");break;
@@ -36219,7 +36440,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 3:strcat(story,"Pur");break;
 					case 4:strcat(story,"Loba");break;
 					}
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"nephrin");break;
 					case 1:strcat(story,"tax");break;
@@ -36228,7 +36449,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"drene");break;
 					}
 				strcat(story,", the drug apparently ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"boosts intelligence in chimpanzees");break;
 					case 1:strcat(story,"corrects erectile dysfunction in chimpanzees");break;
@@ -36243,7 +36464,7 @@ void constructeventstory(char *story,short view,char positive)
 				else strcat(story,".  ");
 				strcat(story,"Fielding questions about the ethics of their experiments from reporters during a press conference yesterday, ");
 				strcat(story,"a spokesperson for the research team stated that, \"It really isn't so bad as all that.  Chimpanzees are very resilient creatures.  ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"The ones that survived are all doing very well");break;
 					case 1:strcat(story,"They hardly notice when you drill their brains out, if you're fast");break;
@@ -36267,7 +36488,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,jstr);
 				strcat(story," Correctional Facility ended tragically yesterday with the ");
 				strcat(story,"death of both the prison guard being held hostage and ");
-				switch(random(2))
+				switch(LCSrandom(2))
 					{
 					case 0:strcat(story,"his");break;
 					case 1:strcat(story,"her");break;
@@ -36289,7 +36510,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," ");
 				strcat(story,gstr2);
 				strcat(story," and barricaded ");
-				switch(random(2))
+				switch(LCSrandom(2))
 					{
 					case 0:strcat(story,"himself");break;
 					case 1:strcat(story,"herself");break;
@@ -36300,7 +36521,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"but talks were cut short when ");
 				strcat(story,dstr2);
 				strcat(story," reportedly screamed into the receiver \"");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"Ah, f*ck this sh*t.  This punk b*tch is f*ckin' dead!");break;
 					case 1:strcat(story,"F*ck a m*th*f*ck*n' bull.  I'm killin' this pig sh*t.");break;
@@ -36311,7 +36532,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"the hostage, but ");
 				strcat(story,dstr2);
 				strcat(story," had already ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"slit the guard's throat with a shank");break;
 					case 1:strcat(story,"strangled the guard to death with a knotted bed sheet");break;
@@ -36328,14 +36549,14 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"would have occurred on American soil.");
 				strcat(story,"&r");
 				strcat(story,"   According to a spokesperson for the agency, ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"white supremacists");break;
 					case 1:strcat(story,"Islamic fundamentalists");break;
 					case 2:strcat(story,"outcast goths from a suburban highschool");break;
 					}
 				strcat(story," planned to ");
-				switch(random(9))
+				switch(LCSrandom(9))
 					{
 					case 0:strcat(story,"fly planes into skyscrapers");break;
 					case 1:strcat(story,"detonate a fertilizer bomb at a federal building");break;
@@ -36372,7 +36593,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"booths and gave talks to wide-eyed onlookers.");
 				strcat(story,"&r");
 				strcat(story,"   One such corporation, ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Altered");break;
 					case 1:strcat(story,"Gene-tech");break;
@@ -36381,7 +36602,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Genomic");break;
 					}
 				strcat(story," ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Foods");break;
 					case 1:strcat(story,"Agriculture");break;
@@ -36390,7 +36611,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Living");break;
 					}
 				strcat(story,", presented their product, \"");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Mega");break;
 					case 1:strcat(story,"Epic");break;
@@ -36399,7 +36620,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Transcendent");break;
 					}
 				strcat(story," ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Rice");break;
 					case 1:strcat(story,"Beans");break;
@@ -36410,7 +36631,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"\", during an afternoon Power Point presentation.  ");
 				strcat(story,"According to the public relations representative speaking, ");
 				strcat(story,"this amazing new product actually ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"extends human life by a few minutes every bite");break;
 					case 1:strcat(story,"mends split-ends upon digestion.  Hair is also made glossier and thicker");break;
@@ -36424,7 +36645,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"in their dismissal of the criticism which often follows the industry.  ");
 				strcat(story,"One in particular said, \"");
 				strcat(story,"Look, these products are safe.  That thing about the ");
-				switch(random(4))
+				switch(LCSrandom(4))
 					{
 					case 0:strcat(story,"guy going on a killing spree");break;
 					case 1:strcat(story,"gal turning blue and exploding");break;
@@ -36432,7 +36653,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 3:strcat(story,"gal having a ruptured intestine");break;
 					}
 				strcat(story," is just a load of ");
-				switch(random(4))
+				switch(LCSrandom(4))
 					{
 					case 0:strcat(story,"hooey");break;
 					case 1:strcat(story,"poppycock");break;
@@ -36467,12 +36688,12 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," of the notoriously liberal circuit of appeals here ");
 				strcat(story,"made the decision based on ");
 				char gen[20];
-				switch(random(2))
+				switch(LCSrandom(2))
 					{
 					case 0:strcpy(gen,"his");break;
 					case 1:strcpy(gen,"her");break;
 					}
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"ten-year-old eye witness testimony");break;
 					case 1:strcat(story,gen);strcat(story," general feeling about police corruption");break;
@@ -36517,7 +36738,7 @@ void constructeventstory(char *story,short view,char positive)
 			case VIEW_POLLUTION:
 				cityname(story);
 				strcat(story," - Pollution might not be so bad after all.  The ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"American");break;
 					case 1:strcat(story,"United");break;
@@ -36526,7 +36747,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Children's");break;
 					}
 				strcat(story," ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Heritage");break;
 					case 1:strcat(story,"Enterprise");break;
@@ -36535,7 +36756,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Charity");break;
 					}
 				strcat(story," ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Partnership");break;
 					case 1:strcat(story,"Institute");break;
@@ -36546,7 +36767,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story," recently released a wide-ranging report detailing recent trends ");
 				strcat(story,"and the latest science on the issue.  ");
 				strcat(story,"Among the most startling of the think tank's findings is that ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"a modest intake of radiactive waste");break;
 					case 1:strcat(story,"a healthy dose of radiation");break;
@@ -36555,7 +36776,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"inhaling carbon monoxide");break;
 					}
 				strcat(story," might actually ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"purify the soul");break;
 					case 1:strcat(story,"increase test scores");break;
@@ -36567,14 +36788,14 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"&r");
 				strcat(story,"   When questioned about the science behind these results, ");
 				strcat(story,"a spokesperson stated that, \"");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"Research is complicated, and there are always two ways to think about things");break;
 					case 1:strcat(story,"The jury is still out on pollution.  You really have to keep an open mind");break;
 					case 2:strcat(story,"They've got their scientists, and we have ours.  The issue of pollution is wide open as it stands today");break;
 					}
 				strcat(story,".  You have to realize that ");
-				switch(random(3))
+				switch(LCSrandom(3))
 					{
 					case 0:strcat(story,"the elitist liberal media often distorts");break;
 					case 1:strcat(story,"the vast left-wing education machine often distorts");break;
@@ -36596,7 +36817,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"during the next quarter.  Over thirty thousand jobs ");
 				strcat(story,"are expected in the first month, with ");
 				strcat(story,"tech giant ");
-				switch(random(10))
+				switch(LCSrandom(10))
 					{
 					case 0:strcat(story,"Ameri");break;
 					case 1:strcat(story,"Gen");break;
@@ -36609,7 +36830,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 8:strcat(story,"Seli");break;
 					case 9:strcat(story,"Rio");break;
 					}
-				switch(random(10))
+				switch(LCSrandom(10))
 					{
 					case 0:strcat(story,"tech");break;
 					case 1:strcat(story,"com");break;
@@ -36647,7 +36868,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"broadcast of the program \"");
 				strcat(story,dstr);
 				strcat(story,"'s ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Morning");break;
 					case 1:strcat(story,"Commuter");break;
@@ -36656,7 +36877,7 @@ void constructeventstory(char *story,short view,char positive)
 					case 4:strcat(story,"Radio");break;
 					}
 				strcat(story," ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"Swamp");break;
 					case 1:strcat(story,"Jolt");break;
@@ -36667,7 +36888,7 @@ void constructeventstory(char *story,short view,char positive)
 				strcat(story,"\", ");
 				strcat(story,dstr2);
 				strcat(story," reportedly ");
-				switch(random(5))
+				switch(LCSrandom(5))
 					{
 					case 0:strcat(story,"had intercourse");break;
 					case 1:strcat(story,"encouraged listeners to call in and relieve themselves");break;
@@ -36704,6 +36925,7 @@ void displaynewsstory(char *story,short *storyx_s,short *storyx_e,int y)
 	int length;
 	char endparagraph=0;
 	char iscentered=0;
+	unsigned int i=0;
 
 	while(curpos<strlen(story)&&cury<25)
 		{
@@ -36713,7 +36935,7 @@ void displaynewsstory(char *story,short *storyx_s,short *storyx_e,int y)
 		length=storyx_e[cury]-storyx_s[cury]+1;
 		if(length==0){cury++;if(endparagraph>0)endparagraph--;continue;}
 
-		for(unsigned int i=curpos;i<strlen(story);i++)
+		for(i=curpos;i<strlen(story);i++)
 			{
 			if(story[i]=='&'&&story[i+1]!='&')
 				{
@@ -36782,7 +37004,7 @@ void displaynewsstory(char *story,short *storyx_s,short *storyx_e,int y)
 
 			while(!endparagraph&&words>1&&strlen(addstring)<length&&!iscentered)
 				{
-				int csp=spacex[random(spacex.size())];
+				int csp=spacex[LCSrandom(spacex.size())];
 
 				for(int x=0;x<spacex.size();x++)
 					{
@@ -36822,14 +37044,14 @@ void displaynewsstory(char *story,short *storyx_s,short *storyx_e,int y)
 		else move(y+t,storyx_s[y+t]);
 		addstr(text[t]);
 
-		delete text[t];
+		delete[] text[t];
 		}
 	text.clear();
 }
 
 void cityname(char *story)
 {
-	switch(random(20))
+	switch(LCSrandom(20))
 		{
 		case 0:strcpy(story,"San Francisco, CA");break;
 		case 1:strcpy(story,"Boston, MA");break;
@@ -36902,9 +37124,9 @@ void generatefiller(char *story,int amount)
 	while(amount>0)
 		{
 		par++;
-		for(int i=0;i<random(10)+3;i++)strcat(story,"~");
+		for(int i=0;i<LCSrandom(10)+3;i++)strcat(story,"~");
 		if(amount>1)strcat(story," ");
-		if(par>=50&&!random(5)&&amount>20)
+		if(par>=50&&!LCSrandom(5)&&amount>20)
 			{
 			par=0;
 			strcat(story,"&r");
@@ -36958,9 +37180,9 @@ char completevacation(datest &d,int p,char &clearformess)
 	addstr(pool[p]->name);
 	addstr(" is back from vacation.");
 
-	short aroll=random(51)+10+pool[p]->attval(ATTRIBUTE_CHARISMA)*2+random(pool[p]->skill[SKILL_PERSUASION]*2+1);
-	short troll=random(21)+d.date[e]->attval(ATTRIBUTE_CHARISMA)+d.date[e]->attval(ATTRIBUTE_WISDOM)*2;
-	pool[p]->skill_ip[SKILL_PERSUASION]+=random(14)+7;
+	short aroll=LCSrandom(51)+10+pool[p]->attval(ATTRIBUTE_CHARISMA)*2+LCSrandom(pool[p]->skill[SKILL_PERSUASION]*2+1);
+	short troll=LCSrandom(21)+d.date[e]->attval(ATTRIBUTE_CHARISMA)+d.date[e]->attval(ATTRIBUTE_WISDOM)*2;
+	pool[p]->skill_ip[SKILL_PERSUASION]+=LCSrandom(14)+7;
 
 	int y=2;
 	if(aroll>troll)
@@ -36975,7 +37197,7 @@ char completevacation(datest &d,int p,char &clearformess)
 		getch();
 
 		if(d.date[e]->att[ATTRIBUTE_WISDOM]<=1||
-			random(20)>d.date[e]->att[ATTRIBUTE_WISDOM])
+			LCSrandom(20)>d.date[e]->att[ATTRIBUTE_WISDOM])
 			{
 			set_color(COLOR_GREEN,COLOR_BLACK,1);
 			move(y,0);y++;
@@ -37025,13 +37247,13 @@ char completevacation(datest &d,int p,char &clearformess)
 			d.date[e]->location=pool[p]->location;
 			d.date[e]->base=pool[p]->base;
 			d.date[e]->align=1;
-			d.date.verase(e);
+			d.date.erase(d.date.begin() + e);
 			
 			return 1;
 			}
 		else
 			{
-			d.date[e]->att[ATTRIBUTE_WISDOM]-=random(5)+1;
+			d.date[e]->att[ATTRIBUTE_WISDOM]-=LCSrandom(5)+1;
 			if(d.date[e]->att[ATTRIBUTE_WISDOM]<1)d.date[e]->att[ATTRIBUTE_WISDOM]=1;
 
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
@@ -37046,7 +37268,7 @@ char completevacation(datest &d,int p,char &clearformess)
 	else
 		{
 		//WISDOM POSSIBLE INCREASE
-		if(d.date[e]->align==-1&&!random(2))
+		if(d.date[e]->align==-1&&!LCSrandom(2))
 			{
 			set_color(COLOR_RED,COLOR_BLACK,1);
 			move(y,0);y++;
@@ -37055,7 +37277,7 @@ char completevacation(datest &d,int p,char &clearformess)
 			addstr(" actually increases ");
 			addstr(pool[p]->name);
 			addstr("'s wisdom!!!");
-			pool[p]->att[ATTRIBUTE_WISDOM]+=random(5)+1;
+			pool[p]->att[ATTRIBUTE_WISDOM]+=LCSrandom(5)+1;
 
 			refresh();
 			getch();
@@ -37073,7 +37295,7 @@ char completevacation(datest &d,int p,char &clearformess)
 		getch();
 
 		delete d.date[e];
-		d.date.verase(e);
+		d.date.erase(d.date.begin() + e);
 
 		return 1;
 		}
@@ -37081,6 +37303,7 @@ char completevacation(datest &d,int p,char &clearformess)
 
 char completedate(datest &d,int p,char &clearformess)
 {
+	int e;
 	clearformess=1;
 
 	erase();
@@ -37094,7 +37317,7 @@ char completedate(datest &d,int p,char &clearformess)
 		else addstr("a hot date with ");
 		}
 	else addstr("dates to manage with ");
-	for(int e=0;e<d.date.size();e++)
+	for(e=0;e<d.date.size();e++)
 		{
 		addstr(d.date[e]->name);
 
@@ -37114,7 +37337,7 @@ char completedate(datest &d,int p,char &clearformess)
 	refresh();
 	getch();
 
-	if(d.date.size()>1&&!random(3))
+	if(d.date.size()>1&&!LCSrandom(3))
 		{
 		move(2,0);
 		addstr("Unfortunately, they all know each other and had been discussing");
@@ -37189,9 +37412,9 @@ char completedate(datest &d,int p,char &clearformess)
 			char c=getch();
 			translategetch(c);
 
-			short aroll=random(21)+pool[p]->attval(ATTRIBUTE_CHARISMA)*2+random(pool[p]->skill[SKILL_PERSUASION]*2+1);
-			short troll=random(21)+d.date[e]->attval(ATTRIBUTE_CHARISMA)+d.date[e]->attval(ATTRIBUTE_WISDOM)*2;
-			pool[p]->skill_ip[SKILL_PERSUASION]+=random(2)+1;
+			short aroll=LCSrandom(21)+pool[p]->attval(ATTRIBUTE_CHARISMA)*2+LCSrandom(pool[p]->skill[SKILL_PERSUASION]*2+1);
+			short troll=LCSrandom(21)+d.date[e]->attval(ATTRIBUTE_CHARISMA)+d.date[e]->attval(ATTRIBUTE_WISDOM)*2;
+			pool[p]->skill_ip[SKILL_PERSUASION]+=LCSrandom(2)+1;
 
 			char test=0;
 			if(c=='a'&&funds>=100&&!pool[p]->clinic)
@@ -37199,7 +37422,7 @@ char completedate(datest &d,int p,char &clearformess)
 				funds-=100;
 				stat_spent+=100;
 				moneylost_compound+=100;
-				aroll+=random(10);
+				aroll+=LCSrandom(10);
 				test=1;
 				}
 			if(c=='b')test=1;
@@ -37219,7 +37442,7 @@ char completedate(datest &d,int p,char &clearformess)
 					getch();
 
 					if(d.date[e]->att[ATTRIBUTE_WISDOM]<=1||
-						random(10)>d.date[e]->att[ATTRIBUTE_WISDOM])
+						LCSrandom(10)>d.date[e]->att[ATTRIBUTE_WISDOM])
 						{
 						set_color(COLOR_GREEN,COLOR_BLACK,1);
 						move(y,0);y++;
@@ -37269,7 +37492,7 @@ char completedate(datest &d,int p,char &clearformess)
 						d.date[e]->location=pool[p]->location;
 						d.date[e]->base=pool[p]->base;
 						d.date[e]->align=1;
-						d.date.verase(e);
+						d.date.erase(d.date.begin() + e);
 						}
 					else
 						{
@@ -37312,7 +37535,7 @@ char completedate(datest &d,int p,char &clearformess)
 					getch();
 
 					delete d.date[e];
-					d.date.verase(e);
+					d.date.erase(d.date.begin() + e);
 					}
 				break;
 				}
@@ -37323,7 +37546,7 @@ char completedate(datest &d,int p,char &clearformess)
 					{
 					if(e2==e)continue;
 					delete d.date[e2];
-					d.date.verase(e2);
+					d.date.erase(d.date.begin() + e2);
 					}
 				d.timeleft=7;
 				return 0;
@@ -37331,7 +37554,7 @@ char completedate(datest &d,int p,char &clearformess)
 			if(c=='d')
 				{
 				delete d.date[e];
-				d.date.verase(e);
+				d.date.erase(d.date.begin() + e);
 				break;
 				}
 			if(c=='e'&&d.date[e]->align==-1&&!pool[p]->clinic)
@@ -37370,7 +37593,7 @@ char completedate(datest &d,int p,char &clearformess)
 
 				pool.push_back(d.date[e]);
 				stat_kidnappings++;
-				d.date.verase(e);
+				d.date.erase(d.date.begin() + e);
 				break;
 				}
 			}while(1);
@@ -37465,7 +37688,7 @@ char confirmdisband(void)
 	char word[80];
 	int pos=0;
 
-	switch(random(5))
+	switch(LCSrandom(5))
 		{
 		case 0:strcpy(word,"Corporate Accountability");break;
 		case 1:strcpy(word,"Free Speech");break;
@@ -37541,8 +37764,10 @@ char confirmdisband(void)
 
 void squadlessbaseassign(void)
 {
+int p = 0;
+int l = 0;
 	vector<creaturest *> temppool;
-	for(int p=0;p<pool.size();p++)
+	for(p=0;p<pool.size();p++)
 		{
 		if(pool[p]->alive&&
 			pool[p]->align==1&&
@@ -37564,7 +37789,7 @@ void squadlessbaseassign(void)
 	if(temppool.size()==0)return;
 
 	vector<int> temploc;
-	for(int l=0;l<location.size();l++)
+	for(l=0;l<location.size();l++)
 		{
 		if(location[l]->renting>=0&&!location[l]->siege.siege)temploc.push_back(l);
 		}
@@ -37722,21 +37947,24 @@ void promoteliberals(void)
 		addstr("CONTACT AFTER PROMOTION");
 
 		int y=2;
-		for(p=page*19;p<temppool.size()&&p<page*19+19;p++)
+		for(int p=page*19;p<temppool.size()&&p<page*19+19;p++)
 			{
 			set_color(COLOR_WHITE,COLOR_BLACK,0);
 			move(y,0);
 			addch(y+'A'-2);addstr(" - ");
 
 			move(y,27);
-			for(int p2=0;p2<pool.size();p2++)
+			int p2 = 0;
+			
+			for(p2=0;p2<pool.size();p2++)
 				{
+				int p3 = 0;
 				if(pool[p2]->alive==1&&pool[p2]->id==temppool[p]->hireid)
 					{
 					addstr(pool[p2]->name);
 
 					move(y,54);
-					for(int p3=0;p3<pool.size();p3++)
+					for(p3=0;p3<pool.size();p3++)
 						{
 						if(pool[p3]->alive==1&&pool[p3]->id==pool[p2]->hireid)
 							{
@@ -37821,9 +38049,9 @@ void sortbyhire(vector<creaturest *> &temppool,vector<int> &level)
 		{
 		if(temppool[i]->hireid==-1)
 			{
-			newpool.insert(0,temppool[i]);
-			level.insert(0,0);
-			temppool.verase(i);
+			newpool.insert(newpool.begin(),temppool[i]);
+			level.insert(level.begin(),0);
+			temppool.erase(temppool.begin() + i);
 			}
 		}
 
@@ -37839,9 +38067,9 @@ void sortbyhire(vector<creaturest *> &temppool,vector<int> &level)
 				{
 				if(temppool[j]->hireid==newpool[i]->id)
 					{
-					newpool.insert(i+1,temppool[j]);
-					level.insert(i+1,level[i]+1);
-					temppool.verase(j);
+					newpool.insert(newpool.begin()+i+1,temppool[j]);
+					level.insert(level.begin()+i+1,level[i]+1);
+					temppool.erase(temppool.begin() + j);
 					changed=1;
 					}
 				}
@@ -37857,12 +38085,13 @@ void sortbyhire(vector<creaturest *> &temppool,vector<int> &level)
 
 void dispersalcheck(char &clearformess)
 {
+int p = 0;
 	//NUKE DISPERSED SQUAD MEMBERS WHOSE MASTERS ARE NOT AVAILABLE
 	if(pool.size()>0)
 		{
 		vector<int> nukeme;
 		nukeme.resize(pool.size());
-		for(int p=pool.size()-1;p>=0;p--)
+		for(p=pool.size()-1;p>=0;p--)
 			{
 			if(!pool[p]->alive||pool[p]->hireid==-1)nukeme[p]=0;
 			else nukeme[p]=1;
@@ -37921,7 +38150,7 @@ void dispersalcheck(char &clearformess)
 
 				removesquadinfo(*pool[p]);
 				delete pool[p];
-				pool.verase(p);
+				pool.erase(pool.begin() + p);
 				}
 			}
 		}
@@ -37946,7 +38175,13 @@ void loadinitfile(void)
 {
 	//LOAD OPTIONS IF POSSIBLE
 	::fstream fseed;
+	#ifdef WIN32_PRE_DOTNET
+	//This uses some non-standard isotream stuff which Microsoft have got
+	//rid of in the .NET 2003 version of their C++ library (the 3rd arg and nocreate)
 	fseed.open("init.txt",ios::nocreate | ios::in,filebuf::sh_read);
+	#else
+	fseed.open("init.txt",ios::in);
+	#endif
 	if(fseed.is_open())
 		{
 		int count=0;
@@ -37996,6 +38231,7 @@ void loadinitfile(void)
 					}
 				}
 			count++;
+			
 			}
 		}
 	fseed.close();
