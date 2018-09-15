@@ -1,0 +1,17 @@
+#####################################################################
+#####################################################################
+##                                                                 ##
+##           Configuration File for Liberal Crime Squad            ##
+##                                                                 ##
+#####################################################################
+#####################################################################
+
+#####################################################################
+##                        Interface Options                        ##
+#####################################################################
+
+Change "brackets" to "page" to use pgup/pgdn to scroll in menus.
+You might have to try both or fiddle with numloc and the pgup/pgdn
+on your number pad to find a combination that works.
+
+			pagekeys = page
